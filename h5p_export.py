@@ -12,7 +12,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 # CONFIGURATION
 # =============================================================================
 
-QUESTIONS_JSON = "questions.json"
+QUESTIONS_JSON = Path("output") / "questions.json"
 OUTPUT_DIR = Path("h5p_output")
 
 # H5P.MultiChoice version (adjust to match your target system)

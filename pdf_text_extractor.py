@@ -1,9 +1,5 @@
-"""
-PDF text extractor with header/footer filtering, OCR fallback, tables, and hierarchical bullets.
-
-Extracts structured content (headings, body text, bullets, tables) from PDFs,
-removes repeating headers/footers, and OCRs image-heavy pages when needed.
-"""
+# PDF text extractor with header/footer filtering, OCR fallback, tables, and hierarchical bullets.
+# Extracts structured content, removes repeating headers/footers, and OCRs image-heavy pages.
 
 import argparse
 import json
@@ -62,15 +58,18 @@ logger = logging.getLogger(__name__)
 
 
 class PdfOpenError(RuntimeError):
-    """Raised when the PDF cannot be opened."""
+    # Raised when the PDF cannot be opened.
+    pass
 
 
 class PasswordRequiredError(RuntimeError):
-    """Raised when the PDF is encrypted and no/invalid password is provided."""
+    # Raised when the PDF is encrypted and no/invalid password is provided.
+    pass
 
 
 class ExtractionError(RuntimeError):
-    """Raised when extraction fails for non-password reasons."""
+    # Raised when extraction fails for non-password reasons.
+    pass
 
 
 # =============================================================================
@@ -78,7 +77,7 @@ class ExtractionError(RuntimeError):
 # =============================================================================
 
 def parse_page_spec(page_spec: str) -> set[int]:
-    """Parse a comma-separated page spec like '1-3,5' into a set of 1-based page numbers."""
+    # Parse a comma-separated page spec like '1-3,5' into a set of 1-based page numbers.
     pages: set[int] = set()
     if not page_spec:
         return pages
@@ -100,7 +99,7 @@ def parse_page_spec(page_spec: str) -> set[int]:
 
 
 def _requires_password(doc) -> bool:
-    """Check common PyMuPDF attributes to determine if a password is needed."""
+    # Check common PyMuPDF attributes to determine if a password is needed.
     for attr in ("needs_pass", "needs_passwd", "is_encrypted"):
         if hasattr(doc, attr):
             val = getattr(doc, attr)
@@ -112,7 +111,7 @@ def _requires_password(doc) -> bool:
 
 
 def extract_pages(pdf_path: str, password: str | None = None, page_filter: set[int] | None = None) -> list[dict]:
-    """Extract text blocks with metadata from selected PDF pages."""
+    # Extract text blocks with metadata from selected PDF pages.
     try:
         doc = fitz.open(pdf_path)
     except Exception as exc:
@@ -194,7 +193,7 @@ def extract_pages(pdf_path: str, password: str | None = None, page_filter: set[i
 
 
 def ocr_page_simple(page) -> list[dict]:
-    """OCR a single PDF page and return text blocks."""
+    # OCR a single PDF page and return text blocks.
     if not OCR_AVAILABLE:
         logger.warning("pytesseract/Pillow not installed - skipping OCR")
         return []
@@ -245,7 +244,7 @@ def ocr_page_simple(page) -> list[dict]:
 # =============================================================================
 
 def detect_headers_footers(pages_text: list[dict]) -> set[str]:
-    """Identify repetitive text in header/footer regions across pages."""
+    # Identify repetitive text in header/footer regions across pages.
     header_texts = defaultdict(int)
     footer_texts = defaultdict(int)
 
@@ -284,7 +283,7 @@ def detect_headers_footers(pages_text: list[dict]) -> set[str]:
 
 
 def is_page_number(text: str) -> bool:
-    """Check if text matches common page number patterns."""
+    # Check if text matches common page number patterns.
     normalized = text.lower().strip()
     patterns = [
         r"^-?\s*\d+\s*-?$",
@@ -299,7 +298,7 @@ def is_page_number(text: str) -> bool:
 # =============================================================================
 
 def get_font_size_ranks(pages_text: list[dict]) -> dict[float, int]:
-    """Map font sizes to ranks (0=largest, 1=second largest, etc.)."""
+    # Map font sizes to ranks (0=largest, 1=second largest, etc.).
     sizes = {
         float(b.get("font_size", 0))
         for p in pages_text
@@ -316,7 +315,7 @@ def detect_header_type(
     median_size: float,
     page_height: float = None
 ) -> str | None:
-    """Determine if block is a heading (h1/h2/h3) based on font size and position."""
+    # Determine if block is a heading (h1/h2/h3) based on font size and position.
     size = float(block.get("font_size", 0))
     if size == 0:
         return None
@@ -347,7 +346,7 @@ def detect_header_type(
 
 
 def detect_bullet_type(block: dict, page_min_x0: float | None):
-    """Detect bullet/list items based on markers or indentation."""
+    # Detect bullet/list items based on markers or indentation.
     text = block.get("text", "").strip()
     x0 = float(block.get("x0", 0))
 
@@ -380,7 +379,7 @@ def detect_bullet_type(block: dict, page_min_x0: float | None):
 
 
 def classify_blocks(pages_text: list[dict]) -> list[dict]:
-    """Classify blocks as headings, bullets, tables, or text."""
+    # Classify blocks as headings, bullets, tables, or text.
     size_rank_map = get_font_size_ranks(pages_text)
 
     all_sizes = sorted(
@@ -467,7 +466,7 @@ def classify_blocks(pages_text: list[dict]) -> list[dict]:
 # =============================================================================
 
 def filter_irrelevant_content(pages_text: list[dict], header_footer_set: set[str]) -> list[dict]:
-    """Remove headers/footers and page numbers."""
+    # Remove headers/footers and page numbers.
     filtered_pages = []
 
     for page_data in pages_text:
@@ -500,9 +499,7 @@ def filter_irrelevant_content(pages_text: list[dict], header_footer_set: set[str
 # =============================================================================
 
 def detect_tables(pages_text: list[dict]) -> list[dict]:
-    """
-    Detect tables by grouping rows (Y proximity) and aligning columns (X proximity).
-    """
+    # Detect tables by grouping rows (Y proximity) and aligning columns (X proximity).
     new_pages = []
     for page in pages_text:
         blocks = page.get("blocks", [])
@@ -596,7 +593,7 @@ def detect_tables(pages_text: list[dict]) -> list[dict]:
 # =============================================================================
 
 def build_hierarchical_blocks(blocks: list[dict]) -> list[dict]:
-    """Group bullets into hierarchy based on indent_level."""
+    # Group bullets into hierarchy based on indent_level.
     result = []
     stack = []
 
@@ -624,7 +621,7 @@ def build_hierarchical_blocks(blocks: list[dict]) -> list[dict]:
 
 
 def save_json(pages_text: list[dict], path: str, encoding: str = "utf-8") -> None:
-    """Save extracted data as JSON with hierarchical bullets."""
+    # Save extracted data as JSON with hierarchical bullets.
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     enriched_pages = []
@@ -641,7 +638,7 @@ def save_json(pages_text: list[dict], path: str, encoding: str = "utf-8") -> Non
 
 
 def format_markdown_table(rows: list[list[str]]) -> str:
-    """Format rows as a Markdown table with column alignment."""
+    # Format rows as a Markdown table with column alignment.
     if not rows or not rows[0]:
         return ""
 
@@ -666,13 +663,13 @@ def format_markdown_table(rows: list[list[str]]) -> str:
 
 
 def save_markdown(pages_text: list[dict], path: str, encoding: str = "utf-8") -> None:
-    """Convert extracted data to Markdown with proper table formatting."""
+    # Convert extracted data to Markdown with proper table formatting.
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = []
 
     def merge_bullet_fragments(blocks: list[dict]) -> list[dict]:
-        """Merge consecutive bullet fragments that likely belong to the same line."""
+        # Merge consecutive bullet fragments that likely belong to the same line.
         merged = []
         for b in blocks:
             b = dict(b)
@@ -740,7 +737,7 @@ def save_markdown(pages_text: list[dict], path: str, encoding: str = "utf-8") ->
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """CLI arguments for the PDF extractor."""
+    # CLI arguments for the PDF extractor.
     parser = argparse.ArgumentParser(
         description="PDF extractor with OCR, header/footer filtering, and optional table detection.",
     )
@@ -761,7 +758,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Main extraction pipeline with CLI."""
+    # Main extraction pipeline with CLI.
     args = parse_args(argv)
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(

@@ -1,9 +1,5 @@
-"""
-Question generation using local LLM (Ollama).
-
-Generates exam-style multiple-choice questions from extracted PDF content,
-aligned with Bloom's taxonomy and evidence-based MCQ guidelines.
-"""
+# Question generation using local LLM (Ollama).
+# Builds exam-style multiple-choice questions from extracted PDF content.
 
 import json
 import logging
@@ -36,7 +32,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 def build_prompt(text_block: str) -> str:
-    """Build structured prompt for MCQ generation with quality guidelines."""
+    # Build structured prompt for MCQ generation with quality guidelines.
     prompt_template = """
     You are an experienced university lecturer creating exam questions.
 
@@ -121,7 +117,7 @@ def build_prompt(text_block: str) -> str:
 # =============================================================================
 
 def call_ollama(prompt: str) -> str:
-    """Send prompt to Ollama and return the response."""
+    # Send prompt to Ollama and return the response.
     url = f"{OLLAMA_BASE_URL}/api/generate"
     payload = {
         "model": OLLAMA_MODEL,
@@ -148,7 +144,7 @@ def call_ollama(prompt: str) -> str:
 # =============================================================================
 
 def extract_json_from_text(text: str) -> dict | None:
-    """Extract and parse JSON from LLM output (handles code fences, noise)."""
+    # Extract and parse JSON from LLM output (handles code fences and noise).
     cleaned = text
 
     # Remove code fences if present
@@ -195,10 +191,8 @@ def extract_json_from_text(text: str) -> dict | None:
 
 
 def normalize_questions(parsed: dict | list) -> list[dict]:
-    """
-    Normalize question format and handle variations in field names.
-    Accepts either a list of dicts or a dict with a 'questions' key.
-    """
+    # Normalize question format and handle variations in field names.
+    # Accepts either a list of dicts or a dict with a 'questions' key.
     questions = None
 
     if isinstance(parsed, list):
@@ -224,7 +218,7 @@ def normalize_questions(parsed: dict | list) -> list[dict]:
 
 
 def format_questions(questions: list[dict]) -> list[dict]:
-    """Format questions with numbered prefixes and letter labels for options."""
+    # Format questions with numbered prefixes and letter labels for options.
     formatted = []
     letters = ["A", "B", "C", "D"]
 
@@ -262,7 +256,7 @@ def format_questions(questions: list[dict]) -> list[dict]:
 # =============================================================================
 
 def load_text_blocks(json_file: str) -> list[str]:
-    """Load and filter text blocks from extracted PDF data."""
+    # Load and filter text blocks from extracted PDF data.
     path = Path(json_file)
     if not path.exists():
         logger.error(f"File not found: {json_file}")
@@ -333,7 +327,7 @@ def load_text_blocks(json_file: str) -> list[str]:
 # =============================================================================
 
 def generate_questions_from_blocks(blocks: list[str]) -> list[dict]:
-    """Generate MCQ questions from text blocks using Ollama."""
+    # Generate MCQ questions from text blocks using Ollama.
     all_questions = []
 
     for i, block in enumerate(blocks, start=1):
@@ -384,7 +378,7 @@ def generate_questions_from_blocks(blocks: list[str]) -> list[dict]:
 # =============================================================================
 
 def main():
-    """Main question generation pipeline."""
+    # Main question generation pipeline.
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",

@@ -1,4 +1,4 @@
-"""Tests for helper functions in question_generation.py (pure functions, no network)."""
+# Tests for helper functions in question_generation.py (pure functions, no network).
 
 import json
 import unittest
@@ -8,7 +8,7 @@ from question_generation import extract_json_from_text, normalize_questions, for
 
 
 def test_extract_json_from_text_simple():
-    """Clean JSON string parses to a dict with questions."""
+    # Clean JSON string parses to a dict with questions.
     payload = {
         "questions": [
             {
@@ -32,7 +32,7 @@ def test_extract_json_from_text_simple():
 
 
 def test_extract_json_from_text_with_noise_around():
-    """JSON surrounded by noise still parses correctly."""
+    # JSON surrounded by noise still parses correctly.
     payload = {
         "questions": [
             {
@@ -61,7 +61,7 @@ def test_extract_json_from_text_with_noise_around():
 
 
 def test_extract_json_from_text_invalid_input():
-    """Invalid JSON returns None without crashing."""
+    # Invalid JSON returns None without crashing.
     invalid_text = "this is not json at all } { ???"
 
     parsed = extract_json_from_text(invalid_text)
@@ -70,7 +70,7 @@ def test_extract_json_from_text_invalid_input():
 
 
 def test_extract_json_from_text_code_fence():
-    """JSON wrapped in code fences still parses."""
+    # JSON wrapped in code fences still parses.
     payload = {"questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_answer_index": 2}]}
     fenced = "```json\n" + json.dumps(payload) + "\n```"
     parsed = extract_json_from_text(fenced)
@@ -78,7 +78,7 @@ def test_extract_json_from_text_code_fence():
 
 
 def test_normalize_questions_accepts_correct_index():
-    """Legacy correct_index maps to correct_answer_index."""
+    # Legacy correct_index maps to correct_answer_index.
     parsed = {"questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_index": 3}]}
     normalized = normalize_questions(parsed)
     assert normalized
@@ -86,7 +86,7 @@ def test_normalize_questions_accepts_correct_index():
 
 
 def test_format_questions_letters_and_numbers():
-    """Formatted questions prefix options with letters and correct letter."""
+    # Formatted questions prefix options with letters and correct letter.
     questions = [
         {"question": "Q1", "options": ["a", "b", "c", "d"], "correct_answer_index": 1, "bloom_level": "remember", "explanation": "because"},
         {"question": "Q2", "options": ["w", "x", "y", "z"], "correct_answer_index": 0, "bloom_level": "understand", "explanation": "because"},
@@ -118,28 +118,28 @@ class TestQuestionGenerationUnit(unittest.TestCase):
         }
 
     def test_extract_json_simple(self):
-        """Plain JSON loads correctly."""
+        # Plain JSON loads correctly.
         parsed = extract_json_from_text(json.dumps(self.payload))
         self.assertIsNotNone(parsed)
         self.assertIn("questions", parsed)
         self.assertEqual(parsed["questions"][0]["question"], "What is AI?")
 
     def test_extract_json_code_fence(self):
-        """Code-fenced JSON loads correctly."""
+        # Code-fenced JSON loads correctly.
         fenced = "```json\n" + json.dumps(self.payload) + "\n```"
         parsed = extract_json_from_text(fenced)
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed["questions"][0]["question"], "What is AI?")
 
     def test_normalize_correct_index(self):
-        """Legacy correct_index is normalized."""
+        # Legacy correct_index is normalized.
         parsed = {"questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_index": 2}]}
         normalized = normalize_questions(parsed)
         self.assertTrue(normalized)
         self.assertEqual(normalized[0]["correct_answer_index"], 2)
 
     def test_format_questions_letters(self):
-        """Options get letter prefixes and correct letter."""
+        # Options get letter prefixes and correct letter.
         questions = [
             {"question": "Q1", "options": ["a", "b", "c", "d"], "correct_answer_index": 3, "bloom_level": "remember", "explanation": "because"}
         ]

@@ -1,4 +1,4 @@
-"""Tests for helper functions in h5p_export.py (slugify, build_multichoice_content)."""
+# Tests for helper functions in h5p_export.py (slugify, build_multichoice_content).
 
 import unittest
 
@@ -6,7 +6,7 @@ from h5p_export import slugify, build_multichoice_content
 
 
 def test_slugify_basic():
-    """Slugify a normal string: lowercase, no spaces/specials, hyphen separation."""
+    # Slugify a normal string: lowercase, no spaces/specials, hyphen separation.
     text = "What is Machine Learning?"
     slug = slugify(text)
 
@@ -20,7 +20,7 @@ def test_slugify_basic():
 
 
 def test_build_multichoice_content_correct_mapping():
-    """One question yields 4 answers with exactly one correct flag at the right index."""
+    # One question yields 4 answers with exactly one correct flag at the right index.
     question_data = {
         "question": "What is 2 + 2?",
         "options": ["3", "4", "5", "22"],
@@ -49,7 +49,7 @@ def test_build_multichoice_content_correct_mapping():
 
 
 def test_build_multichoice_content_includes_explanation():
-    """Explanation from question_data appears in the final H5P question text."""
+    # Explanation should be surfaced in feedback (not in the question stem).
     question_data = {
         "question": "Test question?",
         "options": ["A", "B", "C", "D"],
@@ -59,9 +59,11 @@ def test_build_multichoice_content_includes_explanation():
 
     content = build_multichoice_content(question_data)
     question_text = content["question"]
+    feedback = content["overallFeedback"][0]["feedback"]
 
-    # We expect the explanation text to be included somewhere
-    assert "This is a test explanation." in question_text
+    # Explanation should be in feedback, not the stem
+    assert "This is a test explanation." not in question_text
+    assert "This is a test explanation." in feedback
 
 
 # -----------------------------------------------------------------------------
@@ -97,5 +99,9 @@ class TestH5PExportUnit(unittest.TestCase):
             "correct_answer_index": 0,
             "explanation": "This is a test explanation.",
         }
-        question_text = build_multichoice_content(question_data)["question"]
-        self.assertIn("This is a test explanation.", question_text)
+        content = build_multichoice_content(question_data)
+        question_text = content["question"]
+        feedback = content["overallFeedback"][0]["feedback"]
+
+        self.assertNotIn("This is a test explanation.", question_text)
+        self.assertIn("This is a test explanation.", feedback)

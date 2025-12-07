@@ -1,4 +1,4 @@
-# PDF-to-H5P Pipeline
+# PDF-to-H5P Multiple-Choice-Questions Pipeline
 
 Guide for extracting text from PDFs, generating questions, and exporting to H5P.
 

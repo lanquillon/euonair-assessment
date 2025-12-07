@@ -26,6 +26,12 @@ pip install -r requirements.txt
 - Place your PDF in the project folder or set `PDF_FILE` in `pdf_text_extractor.py`.
 - Adjust `OLLAMA_MODEL` / `OLLAMA_BASE_URL` in `question_generation.py` if you use a different model or endpoint.
 - Ensure Tesseract is installed if you need OCR; otherwise OCR is skipped.
+- OCR defaults (in `pdf_text_extractor.py`):
+  - `FORCE_OCR = False` (keep native text; OCR only when text is scarce; set True to force OCR on all pages)
+  - `OCR_MIN_TEXT_LENGTH = 30` (threshold for triggering OCR when not forced)
+  - Pages are rendered at 400 DPI with grayscale/contrast boost to improve OCR.
+  - Set Tesseract path in your session, e.g.  
+    `PS> $env:TESSERACT_CMD = "C:\Users\<user>\AppData\Local\Tesseract-OCR\tesseract.exe"`
 
 ## Run the pipeline
 ```powershell

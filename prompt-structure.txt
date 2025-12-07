@@ -91,10 +91,3 @@ You are an experienced university lecturer.
         "explanation": "Good feedback keeps users informed about what the system is doing and what will happen next. It does not magically prevent all errors or remove the need for training; instead, it helps users build a correct mental model of the system."
       }}
     ]
-
-    Now generate the JSON output for the following source text:
-
-    <<<SOURCE_TEXT_START>>>
-    {source_text}
-    <<<SOURCE_TEXT_END>>>
-    """

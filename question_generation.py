@@ -16,8 +16,8 @@ import requests
 # CONFIGURATION
 # =============================================================================
 
-EXTRACTED_JSON = "extracted_text.json"
-OUTPUT_JSON = "questions.json"
+EXTRACTED_JSON = Path("output") / "extracted_text.json"
+OUTPUT_JSON = Path("output") / "questions.json"
 
 # Ollama configuration
 OLLAMA_BASE_URL = "http://localhost:11434"
@@ -60,6 +60,12 @@ def build_prompt(text_block: str) -> str:
        - Clear, self-contained stem that can be answered without seeing options
        - Paraphrase concepts; don't copy sentences verbatim
        - Focus on important ideas, not trivial details
+       - Stems must reference specific concepts/techniques from the source (e.g., modularity, table detection); do NOT refer to "the text" or "the author"
+       - BAN phrases like "according to the text/author"; if such wording appears, rewrite the stem to name the specific concept directly
+       - Avoid vague summary stems like "What is the main challenge..."; rewrite to target a concrete concept or brief scenario
+       - At least 2 stems should include a short scenario/application that tests applying a concept, not just recalling it
+       - Cover different concepts across the text; do not repeat the same idea twice
+       - Vary stem styles (definition/contrast, scenario/application, diagnosis/consequence) to keep questions diverse
 
     4. ANSWER OPTIONS
        - Provide EXACTLY 4 options: A, B, C, D
@@ -409,6 +415,7 @@ def main():
 
     # Save to file
     out_path = Path(OUTPUT_JSON)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(result, ensure_ascii=False, indent=2),
         encoding="utf-8"

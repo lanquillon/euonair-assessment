@@ -28,8 +28,9 @@ except ImportError:
 # CONFIGURATION
 # =============================================================================
 
-DEFAULT_OUTPUT_JSON = "extracted_text.json"
-DEFAULT_OUTPUT_MD = "extracted_text.md"
+DEFAULT_OUTPUT_DIR = Path("output")
+DEFAULT_OUTPUT_JSON = DEFAULT_OUTPUT_DIR / "extracted_text.json"
+DEFAULT_OUTPUT_MD = DEFAULT_OUTPUT_DIR / "extracted_text.md"
 
 # Header/footer detection regions (in points; 1 pt ≈ 1/72 inch)
 HEADER_HEIGHT = 80  # ~2.8 cm from top
@@ -624,6 +625,8 @@ def build_hierarchical_blocks(blocks: list[dict]) -> list[dict]:
 
 def save_json(pages_text: list[dict], path: str, encoding: str = "utf-8") -> None:
     """Save extracted data as JSON with hierarchical bullets."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     enriched_pages = []
     for page in pages_text:
         hier = build_hierarchical_blocks(page.get("blocks", []))
@@ -633,7 +636,7 @@ def save_json(pages_text: list[dict], path: str, encoding: str = "utf-8") -> Non
         })
 
     json_str = json.dumps(enriched_pages, ensure_ascii=False, indent=2)
-    Path(path).write_text(json_str, encoding=encoding)
+    path.write_text(json_str, encoding=encoding)
     logger.info(f"JSON saved: {path}")
 
 
@@ -664,6 +667,8 @@ def format_markdown_table(rows: list[list[str]]) -> str:
 
 def save_markdown(pages_text: list[dict], path: str, encoding: str = "utf-8") -> None:
     """Convert extracted data to Markdown with proper table formatting."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     lines = []
 
     def merge_bullet_fragments(blocks: list[dict]) -> list[dict]:

@@ -19,6 +19,18 @@ You are an experienced university lecturer.
       * 3 distractors that are plausible, homogeneous, and based on common
         misconceptions or typical confusions;
       * no "all of the above" or "none of the above";
+      * stems must name a specific concept/technique from the text (e.g.,
+        modularity, dependency injection, table detection) — NEVER refer to
+        "the text" or "the author";
+      * BAN phrases like "according to the text/author"; if they would appear,
+        rewrite the stem to name the concept directly;
+      * avoid vague summary stems like "What is the main challenge..."; rewrite
+        to target a concrete concept or brief scenario;
+      * at least 2 stems should present a short scenario/application to test
+        applying a concept, not just recalling it;
+      * cover different concepts across the source; do not repeat the same idea
+        twice; vary stem styles (definition/contrast, scenario/application,
+        diagnosis/consequence) to keep questions diverse;
       * avoid trivial recall of isolated phrases or word meanings.
 
     STRICT RULES:

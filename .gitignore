@@ -34,6 +34,7 @@ docs/_build/
 
 # Project artifacts
 h5p_output/
+output/
 extracted_text.json
 extracted_text.md
 questions.json

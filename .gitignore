@@ -47,4 +47,7 @@ backup-file.py
 Assessment_Task.md
 resources/
 sources.md
+archive/
 
+
+pdf_text_extractor_codex.py

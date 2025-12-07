@@ -24,6 +24,9 @@ H5P_MC_MINOR = 16  # common version as of recent releases
 # Default language code for your content
 H5P_LANGUAGE = "en"
 
+# Keep answers in the order provided (set to True if you want H5P to shuffle)
+H5P_RANDOMIZE_ANSWERS = False
+
 
 # Helper: sanitize filename
 # ==============================================================================
@@ -122,7 +125,7 @@ def build_multichoice_content(question_data: dict) -> dict:
         # Show "Check" button instead of auto-checking
         "autoCheck": False,
         # Randomize the order of the answer options
-        "randomAnswers": True,
+        "randomAnswers": H5P_RANDOMIZE_ANSWERS,
         # Single or multiple points: False = sum of correct options
         "singlePoint": False,
         # Require the learner to answer before showing solution
@@ -143,27 +146,26 @@ def build_multichoice_content(question_data: dict) -> dict:
     }
 
     # Overall feedback per score range
-    overall_feedback = [
-        {
-            "from": 0,
-            "to": 100,
-            "feedback": "You scored @score out of @maxScore."
-        }
-    ]
-
-    # Append explanation to the question text
     if explanation:
-        question_with_expl = (
-            question_text
-            + "\n\n"
-            + "<em>Explanation:</em> " + explanation
-        )
+        overall_feedback = [
+            {
+                "from": 0,
+                "to": 100,
+                "feedback": explanation
+            }
+        ]
     else:
-        question_with_expl = question_text
+        overall_feedback = [
+            {
+                "from": 0,
+                "to": 100,
+                "feedback": "You scored @score out of @maxScore."
+            }
+        ]
 
     content = {
         # Main question text (HTML allowed, but we keep it simple)
-        "question": question_with_expl,
+        "question": question_text,
 
         # The answer options
         "answers": answers,

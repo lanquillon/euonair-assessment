@@ -1,140 +1,164 @@
-# H5P Export: create one H5P.MultiChoice .h5p file per question.
-# Assumes questions.json from question_generation.py and that the target system
-# already has H5P.MultiChoice installed (libraries are not bundled).
+﻿"""
+H5P export module with validation for multiple-choice questions.
+
+Creates individual .h5p packages compatible with H5P.MultiChoice content type.
+Includes validation to ensure H5P compatibility before export.
+"""
 
 import json
 import re
+import sys
 from pathlib import Path
+from typing import Optional
 from zipfile import ZipFile, ZIP_DEFLATED
 
-# CONFIG
-# ==============================================================================
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
 
-# Input file from the question generation step
 QUESTIONS_JSON = "questions.json"
-
-# Output directory for generated .h5p files
 OUTPUT_DIR = Path("h5p_output")
 
-# H5P MultiChoice version (major/minor)
-# This should match a version installed on your target system.
+# H5P.MultiChoice version (adjust to match your target system)
 H5P_MC_MAJOR = 1
-H5P_MC_MINOR = 16  # common version as of recent releases
+H5P_MC_MINOR = 16
 
-# Default language code for your content
+# Content settings
 H5P_LANGUAGE = "en"
-
-# Keep answers in the order provided (set to True if you want H5P to shuffle)
 H5P_RANDOMIZE_ANSWERS = False
 
 
-# Helper: sanitize filename
-# ==============================================================================
+# =============================================================================
+# VALIDATION
+# =============================================================================
+
+class ValidationError(Exception):
+    """Raised when H5P content validation fails."""
+    pass
+
+
+def validate_question(question: dict, question_num: int) -> list[str]:
+    """Validate a single question for H5P compatibility."""
+    errors: list[str] = []
+
+    if not question.get("question", "").strip():
+        errors.append(f"Q{question_num}: Missing question text")
+
+    options = question.get("options", [])
+    if not options:
+        errors.append(f"Q{question_num}: No answer options provided")
+    elif len(options) < 2:
+        errors.append(f"Q{question_num}: At least 2 options required (found {len(options)})")
+    elif len(options) > 10:
+        errors.append(f"Q{question_num}: Too many options ({len(options)}, max 10 recommended)")
+
+    correct_idx = question.get("correct_answer_index")
+    if correct_idx is None:
+        errors.append(f"Q{question_num}: Missing correct_answer_index")
+    elif not isinstance(correct_idx, int):
+        errors.append(f"Q{question_num}: correct_answer_index must be integer (got {type(correct_idx).__name__})")
+    elif correct_idx < 0 or correct_idx >= len(options):
+        errors.append(f"Q{question_num}: correct_answer_index {correct_idx} out of range (0-{len(options)-1})")
+
+    for i, opt in enumerate(options):
+        if not str(opt).strip():
+            errors.append(f"Q{question_num}: Option {i} is empty")
+
+    question_text = question.get("question", "")
+    if len(question_text) > 5000:
+        errors.append(f"Q{question_num}: Question text very long ({len(question_text)} chars, may cause display issues)")
+
+    option_texts = [str(opt).strip().lower() for opt in options if str(opt).strip()]
+    if len(option_texts) != len(set(option_texts)):
+        errors.append(f"Q{question_num}: Duplicate answer options detected")
+
+    return errors
+
+
+def validate_all_questions(questions: list[dict]) -> tuple[bool, list[str]]:
+    """Validate all questions. Returns (is_valid, error_list)."""
+    all_errors: list[str] = []
+
+    if not questions:
+        all_errors.append("No questions found in input")
+        return False, all_errors
+
+    for i, q in enumerate(questions, start=1):
+        all_errors.extend(validate_question(q, i))
+
+    return len(all_errors) == 0, all_errors
+
+
+# =============================================================================
+# UTILITIES
+# =============================================================================
 
 def slugify(text: str, max_length: int = 40) -> str:
-    """
-    Make a simple, safe filename from the question text.
-
-    Steps:
-      - Lowercase
-      - Replace non-letter/digit with '-'
-      - Collapse multiple '-' into one
-      - Strip leading/trailing '-'
-      - Cut to max_length characters
-
-    Example:
-      "What is Machine Learning?" -> "what-is-machine-learning"
-    """
+    """Convert text to a safe filename slug."""
     text = text.lower()
     text = re.sub(r"[^a-z0-9]+", "-", text)
     text = text.strip("-")
-    if not text:
-        text = "question"
-    return text[:max_length]
+    return (text or "question")[:max_length]
 
 
-# Step 1: Load questions.json
-# ==============================================================================
+# =============================================================================
+# DATA LOADING
+# =============================================================================
 
 def load_questions(path: str) -> list[dict]:
-    """
-    Read questions.json and return the list of question dicts.
-
-    Expected structure (from question_generation.py):
-      top-level dict with "questions": [ {question, options, correct_answer_index, ...}, ... ]
-    """
+    """Load questions from JSON file generated by question_generation.py."""
     file_path = Path(path)
     if not file_path.exists():
         raise FileNotFoundError(f"{path} not found. Run question_generation.py first.")
 
-    data = json.loads(file_path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {path}: {exc}") from exc
+
     questions = data.get("questions", [])
     if not isinstance(questions, list):
-        raise ValueError("questions.json does not contain a 'questions' list.")
+        raise ValueError(f"{path} does not contain a 'questions' list")
+
     return questions
 
 
-# ==============================================================================
-# Step 2: Build content.json for H5P.MultiChoice
-# ==============================================================================
+# =============================================================================
+# H5P CONTENT STRUCTURE
+# =============================================================================
 
 def build_multichoice_content(question_data: dict) -> dict:
-    """
-    Convert one question dict from questions.json into an H5P.MultiChoice
-    content.json structure.
-
-    Keep it minimal:
-      - question text -> "question"
-      - options -> "answers" (with "text" + "correct")
-      - basic behaviour & UI defaults.
-    """
-
+    """Build H5P.MultiChoice content.json structure from question data."""
     question_text = question_data.get("question", "").strip()
     options = question_data.get("options", [])
     correct_index = question_data.get("correct_answer_index", 0)
-    if not isinstance(correct_index, int) or correct_index < 0 or correct_index >= len(options):
-        correct_index = 0
     explanation = question_data.get("explanation", "").strip()
 
     if not question_text or not options:
         raise ValueError("Question or options missing in question_data")
 
-    # Build the "answers" list expected by H5P.MultiChoice
+    if not isinstance(correct_index, int) or not (0 <= correct_index < len(options)):
+        correct_index = 0
+
     answers = []
     for idx, opt_text in enumerate(options):
         opt_text = str(opt_text).strip()
-        if not opt_text:
-            continue
-
-        answers.append({
-            "text": opt_text,
-            "correct": (idx == correct_index),
-            # "tipsAndFeedback" could be used to attach more feedback per option.
-            # For now we keep it minimal (optional field).
-        })
+        if opt_text:
+            answers.append({"text": opt_text, "correct": (idx == correct_index)})
 
     if not answers:
-        raise ValueError("No non-empty answers for question")
+        raise ValueError("No valid answer options found")
 
-    # Basic behaviour config (simplified)
     behaviour = {
-        # Allow multiple attempts
         "enableRetry": True,
-        # Show "Show solution" button
         "enableSolutionsButton": True,
-        # Show "Check" button instead of auto-checking
         "autoCheck": False,
-        # Randomize the order of the answer options
         "randomAnswers": H5P_RANDOMIZE_ANSWERS,
-        # Single or multiple points: False = sum of correct options
         "singlePoint": False,
-        # Require the learner to answer before showing solution
         "showSolutionsRequiresInput": True,
-        # Pass percentage (100 means all correct)
-        "passPercentage": 100
+        "passPercentage": 100,
     }
 
-    # Basic UI labels
     ui = {
         "checkAnswer": "Check",
         "showSolutionButton": "Show solution",
@@ -145,62 +169,19 @@ def build_multichoice_content(question_data: dict) -> dict:
         "yourResult": "Your result:",
     }
 
-    # Overall feedback per score range
-    if explanation:
-        overall_feedback = [
-            {
-                "from": 0,
-                "to": 100,
-                "feedback": explanation
-            }
-        ]
-    else:
-        overall_feedback = [
-            {
-                "from": 0,
-                "to": 100,
-                "feedback": "You scored @score out of @maxScore."
-            }
-        ]
+    overall_feedback = [{"from": 0, "to": 100, "feedback": explanation or "You scored @score out of @maxScore."}]
 
-    content = {
-        # Main question text (HTML allowed, but we keep it simple)
+    return {
         "question": question_text,
-
-        # The answer options
         "answers": answers,
-
-        # Basic behaviour + UI
         "behaviour": behaviour,
         "UI": ui,
-
-        # Simple feedback
         "overallFeedback": overall_feedback,
-
-        # Optional fields we leave out:
-        # - "media" (image/video above the question)
-        # - "l10n" for language overrides
-        # - advanced behaviour options ...
     }
 
-    return content
-
-
-# ==============================================================================
-# Step 3: Build h5p.json metadata
-# ==============================================================================
 
 def build_h5p_metadata(title: str) -> dict:
-    """
-    Build the minimal h5p.json metadata required by the H5P specification.
-
-    Mandatory fields (according to h5p.org):
-      - title
-      - mainLibrary
-      - language
-      - embedTypes
-      - preloadedDependencies
-    """
+    """Build h5p.json metadata (H5P specification requirements)."""
     return {
         "title": title,
         "language": H5P_LANGUAGE,
@@ -212,76 +193,151 @@ def build_h5p_metadata(title: str) -> dict:
                 "majorVersion": H5P_MC_MAJOR,
                 "minorVersion": H5P_MC_MINOR,
             }
-        ]
-        # Optional fields like "license", "authors", ... could be added here.
+        ],
     }
 
 
-# ==============================================================================
-# Step 4: Write .h5p ZIP file
-# ==============================================================================
+# =============================================================================
+# PACKAGE CREATION
+# =============================================================================
 
 def write_h5p_package(output_path: Path, h5p_meta: dict, content_data: dict) -> None:
-    """
-    Create a .h5p file (ZIP):
-      - h5p.json at root
-      - content/content.json inside "content"
-    """
-    # Ensure parent directory exists
+    """Create .h5p ZIP package with required structure."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Convert dicts to JSON strings
     h5p_json_str = json.dumps(h5p_meta, ensure_ascii=False, indent=2)
     content_json_str = json.dumps(content_data, ensure_ascii=False, indent=2)
-
-    # Create ZIP (.h5p) and write the two files
     with ZipFile(output_path, "w", ZIP_DEFLATED) as zf:
         zf.writestr("h5p.json", h5p_json_str)
         zf.writestr("content/content.json", content_json_str)
 
 
-# ==============================================================================
-# Step 5: High-level export function
-# ==============================================================================
+def validate_h5p_package(h5p_path: Path) -> tuple[bool, Optional[str]]:
+    """Basic validation of created H5P package."""
+    try:
+        with ZipFile(h5p_path, "r") as zf:
+            files = zf.namelist()
+            if "h5p.json" not in files:
+                return False, "Missing h5p.json"
+            if "content/content.json" not in files:
+                return False, "Missing content/content.json"
+            try:
+                h5p_data = json.loads(zf.read("h5p.json"))
+                if "mainLibrary" not in h5p_data:
+                    return False, "h5p.json missing mainLibrary"
+            except json.JSONDecodeError as exc:
+                return False, f"Invalid h5p.json: {exc}"
+            try:
+                content_data = json.loads(zf.read("content/content.json"))
+                if "question" not in content_data:
+                    return False, "content.json missing question field"
+                if "answers" not in content_data:
+                    return False, "content.json missing answers field"
+            except json.JSONDecodeError as exc:
+                return False, f"Invalid content.json: {exc}"
+        return True, None
+    except Exception as exc:
+        return False, f"Package validation error: {exc}"
 
-def export_all_questions_to_h5p(
-    questions_file: str = QUESTIONS_JSON,
-    output_dir: Path = OUTPUT_DIR,
-) -> None:
-    """
-    Main pipeline:
-      1) Load all questions.
-      2) For each question build content.json + h5p.json and write one .h5p.
-    """
+
+# =============================================================================
+# EXPORT PIPELINE
+# =============================================================================
+
+def export_all_questions_to_h5p(questions_file: str = QUESTIONS_JSON, output_dir: Path = OUTPUT_DIR, validate: bool = True) -> tuple[int, int]:
+    """Main export pipeline: load questions and create individual .h5p files."""
+    print(f"Loading questions from {questions_file}...")
     questions = load_questions(questions_file)
+
     if not questions:
-        print("No questions found in questions.json")
-        return
+        print("[WARN] No questions found in questions.json")
+        return 0, 0
+
+    print(f"Found {len(questions)} questions")
+
+    if validate:
+        print("\nValidating questions for H5P compatibility...")
+        is_valid, errors = validate_all_questions(questions)
+        if not is_valid:
+            print(f"\n[ERROR] Validation failed with {len(errors)} error(s):\n")
+            for error in errors[:10]:
+                print(f"  - {error}")
+            if len(errors) > 10:
+                print(f"  ... and {len(errors) - 10} more errors")
+            print("\nFix these errors before exporting to H5P.")
+            return 0, len(questions)
+        else:
+            print("All questions validated successfully")
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\nExporting to {output_dir}...\n")
+
+    success_count = 0
+    error_count = 0
 
     for idx, q in enumerate(questions, start=1):
-        # Build title and file name from question text
-        question_text = q.get("question", "").strip()
-        short_slug = slugify(question_text)
-        title = f"MCQ {idx}: {question_text[:60]}"
+        try:
+            question_text = q.get("question", "").strip()
+            short_slug = slugify(question_text)
+            title = f"MCQ {idx}: {question_text[:60]}"
 
-        h5p_meta = build_h5p_metadata(title)
-        content_data = build_multichoice_content(q)
+            h5p_meta = build_h5p_metadata(title)
+            content_data = build_multichoice_content(q)
 
-        # e.g. mcq_001_what-is-machine-learning.h5p
-        filename = f"mcq_{idx:03d}_{short_slug}.h5p"
-        output_path = output_dir / filename
+            filename = f"mcq_{idx:03d}_{short_slug}.h5p"
+            output_path = output_dir / filename
+            write_h5p_package(output_path, h5p_meta, content_data)
 
-        write_h5p_package(output_path, h5p_meta, content_data)
-        print(f"Created {output_path}")
+            if validate:
+                is_valid, error = validate_h5p_package(output_path)
+                if not is_valid:
+                    print(f"[WARN] {filename} - Package validation warning: {error}")
+                    error_count += 1
+                    continue
 
-    print(f"\nDone. {len(questions)} H5P files written to: {output_dir}")
+            print(f"[OK] {filename}")
+            success_count += 1
+
+        except Exception as exc:
+            print(f"[ERROR] Failed to create question {idx}: {exc}")
+            error_count += 1
+
+    return success_count, error_count
 
 
-# ==============================================================================
-# Script entry point
-# ==============================================================================
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def main() -> int:
+    """Main entry point with summary."""
+    print("=" * 70)
+    print("H5P Multiple-Choice Question Exporter")
+    print("=" * 70)
+    print()
+
+    try:
+        success, errors = export_all_questions_to_h5p(questions_file=QUESTIONS_JSON, output_dir=OUTPUT_DIR, validate=True)
+
+        print("\n" + "=" * 70)
+        if errors == 0:
+            print(f"Success! {success} H5P file(s) created in: {OUTPUT_DIR}")
+        else:
+            print("Completed with issues:")
+            print(f"   {success} succeeded, {errors} failed")
+        print("=" * 70)
+
+        return 0 if errors == 0 else 1
+
+    except FileNotFoundError as exc:
+        print(f"\n[ERROR] {exc}")
+        return 1
+    except ValueError as exc:
+        print(f"\n[ERROR] {exc}")
+        return 1
+    except Exception as exc:
+        print(f"\n[ERROR] Unexpected error: {exc}")
+        return 1
+
 
 if __name__ == "__main__":
-    export_all_questions_to_h5p()
+    sys.exit(main())

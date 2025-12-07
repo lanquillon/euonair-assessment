@@ -1,0 +1,50 @@
+# Python bytecode / C extensions
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+env/
+
+# Packaging / build output
+build/
+dist/
+.eggs/
+*.egg-info/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Tests / coverage caches
+.pytest_cache/
+.tox/
+.cache
+.coverage
+coverage.xml
+nosetests.xml
+
+# Documentation build
+docs/_build/
+
+# Logs / temp / editor swaps
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Project artifacts
+h5p_output/
+extracted_text.json
+extracted_text.md
+questions.json
+pictures/
+questions-good.json
+
+# Legacy/backup scripts
+backup-file.py
+
+# Sonstiges
+Assessment_Task.md
+resources/
+sources.md
+

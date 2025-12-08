@@ -9,9 +9,7 @@ Pillow==10.3.0
 # Tables (optional)
 pdfplumber==0.11.4
 
-# HTML mode (optional)
-markdownify==0.12.1
-beautifulsoup4==4.12.3
-
 # Dev/test (optional)
 pytest==8.3.3
+flake8==7.1.1
+pylint==3.3.1

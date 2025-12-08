@@ -59,8 +59,11 @@ Outputs: `extracted_text.json`, `extracted_text.md` (unless skipped).
 --------------------------------------------------------------------
 
 ## Documentation
-<!-- - Kurze Beschreibung der verwendeten KI-Methode/Prompting-Strategie (kann in README integriert sein) -->
-- 
+##### Kurze Beschreibung der verwendeten KI-Methode/Prompting-Strategie
 
+Das KI-Setup umfasst drei Stufen: (1) Extraktion/Strukturierung der PDF-Inhalte (Header/Footer/Page-Filter, optionale OCR, Tabellenerkennung) in JSON/Markdown. (2) Generierung von Multiple-Choice-Fragen über ein lokales LLM (Ollama, Modell: llama2) auf Basis der strukturierten JSON-Blöcke. (3) Export im H5P-Format für LMS-Integration.
+Der zentrale Prompt in question_generation.py erzwingt klare Frage-/Antwortformate (Bloom-Level, Quelle, Index + Buchstabe + Erklärung). 
+Für beispielhafte Multiple-Choice-Fragen habe ich mich z. B. an https://studylib.net/doc/25824333/hmi-qb-answers orientiert und diese als Beispiele im zentralen Prompt integriert.
+Neben dem Prompt-Katalog (https://coda.io/@kic/prompt-katalog) flossen eigene Prompting-Erfahrungen und wissenschaftliche Literatur ein; ChatGPT & Claude halfen beim Feinschliff. Deep-Research diente für Best Practices/Cheat-Sheets zu Prompt-Design und LLM-Evaluierung (v. a. Open-Source-Modelle) inkl. Literaturrecherche. Da ich Programmieranfängerin bin, kamen mehrere LLMs und Selbstrecherche zum Einsatz, um KI-gestützt sauberen, optimierten Code zu erstellen.
 
 

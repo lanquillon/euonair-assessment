@@ -1,5 +1,7 @@
-# PDF text extractor with header/footer filtering, OCR fallback, tables, and hierarchical bullets.
-# Extracts structured content, removes repeating headers/footers, and OCRs image-heavy pages.
+"""PDF extractor with header/footer removal, optional OCR/table detection, and
+structured JSON/Markdown outputs."""
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -8,335 +10,368 @@ import os
 import re
 import sys
 from collections import defaultdict
+from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-import fitz  # PyMuPDF
+import fitz  # type: ignore
 
-# Optional OCR dependencies
 try:
     import pytesseract
     from PIL import Image, ImageEnhance
+
     OCR_AVAILABLE = True
 except ImportError:
     OCR_AVAILABLE = False
 
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
 
-DEFAULT_OUTPUT_DIR = Path("output")
+# --------------------------------------------------------------------------- #
+# Configuration
+# --------------------------------------------------------------------------- #
+
+
+DEFAULT_OUTPUT_DIR = Path("all_output") / "extracted_text_output"
 DEFAULT_OUTPUT_JSON = DEFAULT_OUTPUT_DIR / "extracted_text.json"
 DEFAULT_OUTPUT_MD = DEFAULT_OUTPUT_DIR / "extracted_text.md"
 
-# Header/footer detection regions (in points; 1 pt ≈ 1/72 inch)
-HEADER_HEIGHT = 80  # ~2.8 cm from top
-FOOTER_HEIGHT = 80  # ~2.8 cm from bottom
 
-# OCR settings
-USE_OCR_FOR_IMAGE_PAGES = True
-OCR_MIN_TEXT_LENGTH = 30  # Minimum chars before triggering OCR
-OCR_LANG = "eng+deu"  # Tesseract language packs
-FORCE_OCR = False  # Prefer native text; set True to force OCR on all pages
-DETECT_TABLES = False  # Alignment-based table detection (can over-detect)
+@dataclass
+class ExtractConfig:  # pylint: disable=too-many-instance-attributes
+    """User-supplied extraction settings."""
 
-# Tesseract path (optional, set via environment variable)
-TESSERACT_CMD = os.getenv("TESSERACT_CMD")
+    pdf_path: Path
+    output_json: Path = DEFAULT_OUTPUT_JSON
+    output_md: Path = DEFAULT_OUTPUT_MD
+    password: Optional[str] = None
+    pages: Optional[Set[int]] = None
+    detect_tables: bool = False
+    use_ocr: bool = True
+    force_ocr: bool = False
+    encoding: str = "utf-8"
+    header_height: float = 80.0
+    footer_height: float = 80.0
+    heading_rel_threshold: float = 1.15
+    indent_step: float = 12.0
+    y_tolerance: float = 5.0
+    x_tolerance: float = 30.0
+    ocr_min_text_len: int = 30
+    ocr_lang: str = "eng+deu"
+    tesseract_cmd: Optional[str] = os.getenv("TESSERACT_CMD")
 
-# Content detection heuristics
-HEADING_REL_THRESHOLD = 1.15  # Font size multiplier for heading detection
-INDENT_STEP = 12.0  # Points per indentation level
-Y_TOLERANCE = 5  # Pixels for row grouping (tables)
-X_TOLERANCE = 30  # Pixels for column alignment (tables)
 
-# Logging
-logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# EXCEPTIONS
-# =============================================================================
+# --------------------------------------------------------------------------- #
+# Exceptions
+# --------------------------------------------------------------------------- #
 
 
 class PdfOpenError(RuntimeError):
-    # Raised when the PDF cannot be opened.
-    pass
+    """PDF cannot be opened."""
 
 
 class PasswordRequiredError(RuntimeError):
-    # Raised when the PDF is encrypted and no/invalid password is provided.
-    pass
+    """PDF requires a password."""
 
 
 class ExtractionError(RuntimeError):
-    # Raised when extraction fails for non-password reasons.
-    pass
+    """Extraction failed."""
 
 
-# =============================================================================
-# EXTRACTION
-# =============================================================================
+# --------------------------------------------------------------------------- #
+# PDF helpers
+# --------------------------------------------------------------------------- #
 
-def parse_page_spec(page_spec: str) -> set[int]:
-    # Parse a comma-separated page spec like '1-3,5' into a set of 1-based page numbers.
-    pages: set[int] = set()
+
+def parse_page_spec(page_spec: Optional[str]) -> Optional[Set[int]]:
+    """Parse '1-3,5' into a set of 1-based page numbers."""
     if not page_spec:
-        return pages
-
+        return None
+    pages: Set[int] = set()
     for part in page_spec.split(","):
         part = part.strip()
         if not part:
             continue
         if "-" in part:
-            start, end = part.split("-", 1)
-            start, end = int(start), int(end)
+            start_str, end_str = part.split("-", 1)
+            start, end = int(start_str), int(end_str)
             if start > end:
                 start, end = end, start
             pages.update(range(start, end + 1))
         else:
             pages.add(int(part))
-
     return {p for p in pages if p > 0}
 
 
-def _requires_password(doc) -> bool:
-    # Check common PyMuPDF attributes to determine if a password is needed.
+def _requires_password(doc: Any) -> bool:
+    """Return True if the document needs a password."""
     for attr in ("needs_pass", "needs_passwd", "is_encrypted"):
         if hasattr(doc, attr):
             val = getattr(doc, attr)
             try:
                 return val() if callable(val) else bool(val)
-            except Exception:
+            except (RuntimeError, TypeError, ValueError):
                 return False
     return False
 
 
-def extract_pages(pdf_path: str, password: str | None = None, page_filter: set[int] | None = None) -> list[dict]:
-    # Extract text blocks with metadata from selected PDF pages.
+def open_pdf(cfg: ExtractConfig) -> Any:
+    """Open a PDF, authenticating if needed."""
     try:
-        doc = fitz.open(pdf_path)
-    except Exception as exc:
-        raise PdfOpenError(f"Cannot open PDF {pdf_path}: {exc}") from exc
+        doc = fitz.open(cfg.pdf_path)
+    except (RuntimeError, OSError) as exc:
+        msg = f"Cannot open PDF {cfg.pdf_path}: {exc}"
+        raise PdfOpenError(msg) from exc
 
-    try:
-        if _requires_password(doc):
-            if not password:
-                raise PasswordRequiredError(f"PDF {pdf_path} is password-protected (password required)")
-            auth_method = getattr(doc, "authenticate", None)
-            if callable(auth_method):
-                authed = auth_method(password)
-                if not authed and _requires_password(doc):
-                    raise PasswordRequiredError(f"Invalid password for PDF {pdf_path}")
-            elif _requires_password(doc):
-                raise PasswordRequiredError(f"Cannot unlock PDF {pdf_path} (password needed)")
-    except PasswordRequiredError:
-        raise
-    except Exception as exc:
-        raise PasswordRequiredError(f"Password check failed for {pdf_path}: {exc}") from exc
-
-    pages_text = []
-
-    for i, page in enumerate(doc, start=1):
-        if page_filter and i not in page_filter:
-            continue
-
-        page_dict = page.get_text("dict")
-        page_blocks = []
-
-        # Extract text blocks with positioning metadata
-        for block in page_dict.get("blocks", []):
-            for line in block.get("lines", []):
-                spans = line.get("spans", [])
-                if not spans:
-                    continue
-
-                text = "".join(s.get("text", "") for s in spans).strip()
-                if not text:
-                    continue
-
-                # Calculate bounding box
-                x0 = min(s["bbox"][0] for s in spans)
-                y0 = min(s["bbox"][1] for s in spans)
-                x1 = max(s["bbox"][2] for s in spans)
-                y1 = max(s["bbox"][3] for s in spans)
-
-                font_size = max((s.get("size", 0) for s in spans), default=0)
-                font_name = spans[0].get("font", "") if spans else ""
-
-                page_blocks.append({
-                    "text": text,
-                    "bbox": [x0, y0, x1, y1],
-                    "x0": x0,
-                    "y0": y0,
-                    "font_size": float(font_size),
-                    "font_name": font_name,
-                })
-
-        # OCR fallback for image-heavy pages
-        if USE_OCR_FOR_IMAGE_PAGES:
-            total_text_len = sum(len(b["text"]) for b in page_blocks)
-            should_ocr = FORCE_OCR or total_text_len < OCR_MIN_TEXT_LENGTH
-
-            if should_ocr:
-                logger.info(f"Page {i}: Low text content ({total_text_len} chars) - trying OCR")
-                ocr_blocks = ocr_page_simple(page)
-                if ocr_blocks:
-                    if total_text_len > 0 and not FORCE_OCR:
-                        page_blocks.extend(ocr_blocks)
-                    else:
-                        page_blocks = ocr_blocks
-                else:
-                    logger.info(f"Page {i}: OCR returned no text")
-
-        pages_text.append({"page": i, "blocks": page_blocks})
-
-    return pages_text
+    if _requires_password(doc):
+        if not cfg.password:
+            msg = (
+                f"PDF {cfg.pdf_path} is password-protected "
+                "(password required)"
+            )
+            raise PasswordRequiredError(msg)
+        auth = getattr(doc, "authenticate", None)
+        if callable(auth):
+            authed = auth(cfg.password)
+            if not authed and _requires_password(doc):
+                msg = f"Invalid password for PDF {cfg.pdf_path}"
+                raise PasswordRequiredError(msg)
+        elif _requires_password(doc):
+            msg = f"Cannot unlock PDF {cfg.pdf_path} (password needed)"
+            raise PasswordRequiredError(msg)
+    return doc
 
 
-def ocr_page_simple(page) -> list[dict]:
-    # OCR a single PDF page and return text blocks.
+# --------------------------------------------------------------------------- #
+# Extraction (text + OCR)
+# --------------------------------------------------------------------------- #
+
+
+def _ocr_page(cfg: ExtractConfig, page: Any) -> List[Dict[str, Any]]:
+    """OCR a single page into pseudo-blocks."""
     if not OCR_AVAILABLE:
-        logger.warning("pytesseract/Pillow not installed - skipping OCR")
+        logging.warning("pytesseract/Pillow not installed - skipping OCR")
         return []
-
-    if TESSERACT_CMD:
-        pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
-
+    if cfg.tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = cfg.tesseract_cmd
     try:
-        # Render page to image at higher DPI for better OCR accuracy
         pix = page.get_pixmap(dpi=400)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        # Grayscale and boost contrast to help OCR on diagrams/screenshots
         img = ImageEnhance.Contrast(img.convert("L")).enhance(1.8)
-        raw_text = pytesseract.image_to_string(img, lang=OCR_LANG).strip()
-
-    except pytesseract.TesseractNotFoundError:
-        logger.error(
-            "Tesseract not found. Install it and add to PATH or set TESSERACT_CMD env variable"
-        )
+        raw = pytesseract.image_to_string(img, lang=cfg.ocr_lang).strip()
+    except pytesseract.TesseractNotFoundError as exc:
+        logging.error("Tesseract not found: %s", exc)
         return []
-    except Exception as e:
-        logger.error(f"OCR error: {e}")
+    except RuntimeError as exc:
+        logging.error("OCR error: %s", exc)
         return []
-
-    if not raw_text:
+    if not raw:
         return []
 
-    # Split OCR output into pseudo-blocks on blank lines
-    ocr_blocks = []
-    for chunk in raw_text.split("\n\n"):
-        chunk = chunk.strip()
-        if chunk:
-            ocr_blocks.append({
-                "text": chunk,
-                "bbox": [0, 0, page.rect.width, page.rect.height],
-                "x0": 0,
-                "y0": 0,
-                "font_size": 12.0,  # Dummy value
-                "font_name": "ocr",  # Marker for OCR content
-            })
+    blocks: List[Dict[str, Any]] = []
+    for chunk in raw.split("\n\n"):
+        text = chunk.strip()
+        if text:
+            blocks.append(
+                {
+                    "text": text,
+                    "bbox": [0, 0, page.rect.width, page.rect.height],
+                    "x0": 0,
+                    "y0": 0,
+                    "font_size": 12.0,
+                    "font_name": "ocr",
+                }
+            )
+    return blocks
 
-    logger.info(f"OCR recognized {len(ocr_blocks)} text block(s)")
-    return ocr_blocks
+
+# pylint: disable=too-many-locals,too-many-branches,too-many-nested-blocks
+def extract_pages(
+    cfg: ExtractConfig,
+) -> List[Dict[str, Any]]:
+    """Extract text blocks and apply OCR fallback."""
+    doc = open_pdf(cfg)
+    pages: List[Dict[str, Any]] = []
+    try:
+        for idx, page in enumerate(doc, start=1):
+            if cfg.pages and idx not in cfg.pages:
+                continue
+
+            page_dict = page.get_text("dict")
+            blocks: List[Dict[str, Any]] = []
+            for block in page_dict.get("blocks", []):
+                for line in block.get("lines", []):
+                    spans = line.get("spans", [])
+                    if not spans:
+                        continue
+                    # Merge all spans on the line to preserve font/bbox info.
+                    text_parts = (span.get("text", "") for span in spans)
+                    text = "".join(text_parts).strip()
+                    if not text:
+                        continue
+                    x0 = min(span["bbox"][0] for span in spans)
+                    y0 = min(span["bbox"][1] for span in spans)
+                    x1 = max(span["bbox"][2] for span in spans)
+                    y1 = max(span["bbox"][3] for span in spans)
+                    blocks.append(
+                        {
+                            "text": text,
+                            "bbox": [x0, y0, x1, y1],
+                            "x0": x0,
+                            "y0": y0,
+                            "font_size": float(
+                                max(
+                                    (span.get("size", 0) for span in spans),
+                                    default=0,
+                                )
+                            ),
+                            "font_name": (
+                                spans[0].get("font", "") if spans else ""
+                            ),
+                        }
+                    )
+
+            if cfg.use_ocr:
+                # OCR only when text is scarce or explicitly forced.
+                total_len = sum(len(block["text"]) for block in blocks)
+                if cfg.force_ocr or total_len < cfg.ocr_min_text_len:
+                    logging.info(
+                        "Page %s low text (%s) -> OCR",
+                        idx,
+                        total_len,
+                    )
+                    ocr_blocks = _ocr_page(cfg, page)
+                    if ocr_blocks:
+                        if total_len > 0 and not cfg.force_ocr:
+                            blocks.extend(ocr_blocks)
+                        else:
+                            blocks = ocr_blocks
+
+            pages.append(
+                {
+                    "page": idx,
+                    "page_height": float(page.rect.height),
+                    "page_width": float(page.rect.width),
+                    "blocks": blocks,
+                }
+            )
+        return pages
+    finally:
+        with suppress(Exception):
+            doc.close()
 
 
-# =============================================================================
-# HEADER/FOOTER DETECTION
-# =============================================================================
+# --------------------------------------------------------------------------- #
+# Header/footer detection and filtering
+# --------------------------------------------------------------------------- #
 
-def detect_headers_footers(pages_text: list[dict]) -> set[str]:
-    # Identify repetitive text in header/footer regions across pages.
-    header_texts = defaultdict(int)
-    footer_texts = defaultdict(int)
 
-    for page_data in pages_text:
-        blocks = page_data["blocks"]
+def detect_headers_footers(
+    cfg: ExtractConfig, pages: List[Dict[str, Any]]
+) -> Set[str]:
+    """Find repeating header/footer texts across pages."""
+    headers: Dict[str, int] = defaultdict(int)
+    footers: Dict[str, int] = defaultdict(int)
+    for page in pages:
+        blocks = page.get("blocks", [])
         if not blocks:
             continue
-
-        max_y = max(b["bbox"][3] for b in blocks)
-
+        max_y = max(block["bbox"][3] for block in blocks)
         for block in blocks:
-            bbox = block["bbox"]
-            y_top, y_bottom = bbox[1], bbox[3]
-            normalized = block["text"].lower().strip()
+            text_norm = block["text"].lower().strip()
+            y0, y1 = block["bbox"][1], block["bbox"][3]
+            if y0 < cfg.header_height:
+                headers[text_norm] += 1
+            if y1 > max_y - cfg.footer_height:
+                footers[text_norm] += 1
 
-            if y_top < HEADER_HEIGHT:
-                header_texts[normalized] += 1
-            if y_bottom > (max_y - FOOTER_HEIGHT):
-                footer_texts[normalized] += 1
-
-    total_pages = len(pages_text)
-    threshold = total_pages * 0.5
-    header_footer_set = set()
-
-    for text, count in header_texts.items():
-        if count > threshold:
-            header_footer_set.add(text)
-            logger.info(f"Header detected: '{text}' ({count}/{total_pages} pages)")
-
-    for text, count in footer_texts.items():
-        if count > threshold:
-            header_footer_set.add(text)
-            logger.info(f"Footer detected: '{text}' ({count}/{total_pages} pages)")
-
-    return header_footer_set
+    total = max(len(pages), 1)
+    threshold = total * 0.5
+    found = {t for t, count in headers.items() if count > threshold}
+    found |= {t for t, count in footers.items() if count > threshold}
+    for text in found:
+        logging.info("Header/footer detected: '%s'", text)
+    return found
 
 
 def is_page_number(text: str) -> bool:
-    # Check if text matches common page number patterns.
-    normalized = text.lower().strip()
+    """Return True if text looks like a page number."""
+    norm = text.lower().strip()
     patterns = [
         r"^-?\s*\d+\s*-?$",
         r"^(seite|page|p\.?)\s+\d+$",
         r"^\d+\s+(von|of|/)\s+\d+$",
     ]
-    return any(re.match(pattern, normalized) for pattern in patterns)
+    return any(re.match(pattern, norm) for pattern in patterns)
 
 
-# =============================================================================
-# CONTENT CLASSIFICATION
-# =============================================================================
+def filter_irrelevant(
+    cfg: ExtractConfig, pages: List[Dict[str, Any]], header_footer: Set[str]
+) -> List[Dict[str, Any]]:
+    """Remove detected headers/footers and page numbers (also by position)."""
+    targets = {text.lower().strip() for text in header_footer}
+    cleaned: List[Dict[str, Any]] = []
+    for page in pages:
+        page_height = float(page.get("page_height", 0) or 0)
+        kept = []
+        for block in page.get("blocks", []):
+            text = block.get("text", "")
+            norm = text.lower().strip()
+            bbox = block.get("bbox", [0, 0, 0, 0])
+            y0, y1 = bbox[1], bbox[3]
+            near_header = page_height and y0 < cfg.header_height
+            near_footer = page_height and y1 > (
+                page_height - cfg.footer_height
+            )
+            if norm in targets or is_page_number(text):
+                continue
+            # Drop blocks located in header/footer bands even if text varies.
+            if near_header or near_footer:
+                continue
+            kept.append(block)
+        cleaned.append({**page, "blocks": kept})
+    return cleaned
 
-def get_font_size_ranks(pages_text: list[dict]) -> dict[float, int]:
-    # Map font sizes to ranks (0=largest, 1=second largest, etc.).
+
+# --------------------------------------------------------------------------- #
+# Classification (headings, bullets, tables)
+# --------------------------------------------------------------------------- #
+
+
+def get_font_size_ranks(pages: List[Dict[str, Any]]) -> Dict[float, int]:
+    """Map font sizes to rank (0 = largest)."""
     sizes = {
-        float(b.get("font_size", 0))
-        for p in pages_text
-        for b in p.get("blocks", [])
-        if b.get("font_size", 0) > 0
+        float(block.get("font_size", 0))
+        for page in pages
+        for block in page.get("blocks", [])
+        if block.get("font_size", 0) > 0
     }
     sorted_sizes = sorted(sizes, reverse=True)
     return {size: idx for idx, size in enumerate(sorted_sizes)}
 
 
+# pylint: disable=too-many-return-statements
 def detect_header_type(
-    block: dict,
-    size_rank_map: dict[float, int],
+    cfg: ExtractConfig,
+    block: Dict[str, Any],
+    size_rank: Dict[float, int],
     median_size: float,
-    page_height: float = None
-) -> str | None:
-    # Determine if block is a heading (h1/h2/h3) based on font size and position.
+    page_height: float,
+) -> Optional[str]:
+    """Decide if a block is a header h1/h2/h3."""
     size = float(block.get("font_size", 0))
     if size == 0:
         return None
-
     y_top = float(block.get("bbox", [0, 0, 0, 0])[1])
-    near_top = False
-    if page_height:
-        near_top = y_top < max(HEADER_HEIGHT, page_height * 0.12)
-    else:
-        near_top = y_top < HEADER_HEIGHT
-
-    rank = size_rank_map.get(size)
+    near_top = y_top < max(cfg.header_height, page_height * 0.12)
+    rank = size_rank.get(size)
     if rank == 0:
         return "h1"
     if rank == 1:
         return "h2" if near_top else "h3"
     if rank == 2:
         return "h3"
-
     fname = (block.get("font_name") or "").lower()
-    if median_size and size >= median_size * HEADING_REL_THRESHOLD:
+    if median_size and size >= median_size * cfg.heading_rel_threshold:
         if "bold" in fname or "bf" in fname:
             return "h2"
         if near_top:
@@ -345,524 +380,576 @@ def detect_header_type(
     return None
 
 
-def detect_bullet_type(block: dict, page_min_x0: float | None):
-    # Detect bullet/list items based on markers or indentation.
+def detect_bullet(
+    cfg: ExtractConfig, block: Dict[str, Any], page_min_x0: Optional[float]
+) -> Tuple[bool, int, str]:
+    """Detect list items by marker or indentation."""
     text = block.get("text", "").strip()
     x0 = float(block.get("x0", 0))
 
-    # Pattern 1: Symbol bullets
-    if m := re.match(r"^\s*([-*•◦o◦▪▸·\u2022>])\s+(.*)$", text):
-        block["text"] = m.group(2).strip()
-        return True, 0
-
-    # Pattern 2: Numbered bullets
-    if m := re.match(r"^\s*(\d+[.)])\s+(.*)$", text):
-        block["text"] = m.group(2).strip()
-        return True, 0
-
-    # Pattern 3: Lettered bullets
-    if m := re.match(r"^\s*([a-zA-Z][.)])\s+(.*)$", text):
-        block["text"] = m.group(2).strip()
-        return True, 0
+    bullet_patterns = [
+        r"^\s*([-\u2022*])\s+(.*)$",
+        r"^\s*(\d+[.)])\s+(.*)$",
+        r"^\s*([a-zA-Z][.)])\s+(.*)$",
+    ]
+    for pattern in bullet_patterns:
+        match = re.match(pattern, text)
+        if match:
+            return True, 0, match.group(2).strip()
 
     if page_min_x0 is None:
-        return False, 0
+        return False, 0, text
 
     rel = max(0.0, x0 - page_min_x0)
-    indent_level = int(rel // INDENT_STEP)
-    word_count = len(text.split())
-
-    if indent_level > 0 and word_count <= 25:
-        return True, indent_level
-
-    return False, 0
+    indent = int(rel // cfg.indent_step)
+    if indent > 0 and len(text.split()) <= 25:
+        return True, indent, text
+    return False, 0, text
 
 
-def classify_blocks(pages_text: list[dict]) -> list[dict]:
-    # Classify blocks as headings, bullets, tables, or text.
-    size_rank_map = get_font_size_ranks(pages_text)
+# pylint: disable=too-many-locals
+def classify(
+    cfg: ExtractConfig, pages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Classify blocks into headings, bullets, tables, or text."""
+    size_rank = get_font_size_ranks(pages)
+    all_sizes = [
+        block.get("font_size", 0)
+        for page in pages
+        for block in page.get("blocks", [])
+        if block.get("font_size", 0)
+    ]
+    median_size = sorted(all_sizes)[len(all_sizes) // 2] if all_sizes else 0
 
-    all_sizes = sorted(
-        b.get("font_size", 0)
-        for p in pages_text
-        for b in p.get("blocks", [])
-        if b.get("font_size", 0)
-    )
-    median_size = all_sizes[len(all_sizes) // 2] if all_sizes else 0
-
-    classified_pages = []
-    for page_data in pages_text:
-        blocks = page_data.get("blocks", [])
-        page_min_x0 = min((b.get("x0", 0) for b in blocks), default=None)
-
-        classified_blocks = []
+    classified: List[Dict[str, Any]] = []
+    for page in pages:
+        blocks = page.get("blocks", [])
+        page_min_x0 = min(
+            (block.get("x0", 0) for block in blocks),
+            default=None,
+        )
+        page_height = float(page.get("page_height", 0) or 0)
+        new_blocks: List[Dict[str, Any]] = []
         idx = 0
         while idx < len(blocks):
             block = blocks[idx]
+            btype = block.get("type", "text")
             text = block.get("text", "")
-            block_type = block.get("type", "text")  # Preserve existing type
+            meta: Dict[str, Any] = {}
 
-            # If table detection is disabled, treat tables as plain text
-            if not DETECT_TABLES and block_type == "table":
-                block_type = "text"
+            if not cfg.detect_tables and btype == "table":
+                btype = "text"
 
-            # Preserve detected tables
-            if block_type == "table":
-                classified_blocks.append(block)
+            if btype == "table":
+                new_blocks.append(block)
                 idx += 1
                 continue
 
-            meta = {}
-
-            # Standalone bullet marker with next-line text
-            if re.match(r"^\s*[-*•◦o◦▪▸·\u2022>]\s*$", text):
+            if re.match(r"^\s*[-\u2022*]\s*$", text):
                 if idx + 1 < len(blocks):
-                    next_b = blocks[idx + 1]
-                    combined_text = next_b.get("text", "").strip()
-
+                    next_block = blocks[idx + 1]
+                    combined_text = next_block.get("text", "").strip()
                     bbox_a = block.get("bbox", [0, 0, 0, 0])
-                    bbox_b = next_b.get("bbox", [0, 0, 0, 0])
+                    bbox_b = next_block.get("bbox", [0, 0, 0, 0])
                     combined_bbox = [
                         min(bbox_a[0], bbox_b[0]),
                         min(bbox_a[1], bbox_b[1]),
                         max(bbox_a[2], bbox_b[2]),
                         max(bbox_a[3], bbox_b[3]),
                     ]
-                    indent = int(round(float(next_b.get("x0", 0)) // INDENT_STEP))
-                    block_type = "bullet"
-                    meta["indent_level"] = indent
-                    entry = {"text": combined_text, "bbox": combined_bbox, "type": block_type}
-                    entry.update(meta)
-                    classified_blocks.append(entry)
+                    indent_val = int(
+                        round(
+                            float(next_block.get("x0", 0))
+                            // cfg.indent_step
+                        )
+                    )
+                    # Combine marker + next block into a single bullet entry.
+                    new_blocks.append(
+                        {
+                            "text": combined_text,
+                            "bbox": combined_bbox,
+                            "type": "bullet",
+                            "indent_level": indent_val,
+                        }
+                    )
                     idx += 2
                     continue
-                else:
-                    indent = int(round(float(block.get("x0", 0)) // INDENT_STEP))
-                    block_type = "bullet"
-                    meta["indent_level"] = indent
-
-            else:
-                is_bullet, indent = detect_bullet_type(block, page_min_x0)
-                if is_bullet:
-                    block_type = "bullet"
-                    meta["indent_level"] = indent
-                else:
-                    if hdr := detect_header_type(block, size_rank_map, median_size):
-                        block_type = f"header_{hdr}"
-                        meta["heading_level"] = hdr
-
-            entry = {"text": text, "bbox": block.get("bbox"), "type": block_type}
-            entry.update(meta)
-            classified_blocks.append(entry)
-            idx += 1
-
-        classified_pages.append({"page": page_data.get("page"), "blocks": classified_blocks})
-
-    return classified_pages
-
-
-# =============================================================================
-# FILTERING
-# =============================================================================
-
-def filter_irrelevant_content(pages_text: list[dict], header_footer_set: set[str]) -> list[dict]:
-    # Remove headers/footers and page numbers.
-    filtered_pages = []
-
-    for page_data in pages_text:
-        original_count = len(page_data["blocks"])
-
-        filtered_blocks = []
-        for block in page_data["blocks"]:
-            text = block["text"]
-            normalized = text.lower().strip()
-
-            if normalized in header_footer_set or is_page_number(text):
+                indent_val = int(
+                    round(float(block.get("x0", 0)) // cfg.indent_step)
+                )
+                new_blocks.append(
+                    {
+                        "text": text,
+                        "bbox": block.get("bbox"),
+                        "type": "bullet",
+                        "indent_level": indent_val,
+                    }
+                )
+                idx += 1
                 continue
 
-            filtered_blocks.append(block)
-
-        removed_count = original_count - len(filtered_blocks)
-        if removed_count > 0:
-            logger.info(f"  Page {page_data['page']}: removed {removed_count} irrelevant blocks")
-
-        filtered_pages.append({
-            "page": page_data["page"],
-            "blocks": filtered_blocks
-        })
-
-    return filtered_pages
-
-
-# =============================================================================
-# IMPROVED TABLE DETECTION
-# =============================================================================
-
-def detect_tables(pages_text: list[dict]) -> list[dict]:
-    # Detect tables by grouping rows (Y proximity) and aligning columns (X proximity).
-    new_pages = []
-    for page in pages_text:
-        blocks = page.get("blocks", [])
-        used = set()
-        tables = []
-
-        # Sort blocks by Y position
-        sorted_blocks = sorted(enumerate(blocks), key=lambda x: x[1].get("y0", 0))
-
-        # Group into potential rows based on Y proximity
-        rows = []
-        current_row = []
-        current_y = None
-        for idx, b in sorted_blocks:
-            y = b.get("y0", 0)
-            if current_y is None or abs(y - current_y) <= Y_TOLERANCE:
-                current_row.append((idx, b))
-                current_y = y if current_y is None else current_y
+            is_bullet, indent, cleaned_text = detect_bullet(
+                cfg, block, page_min_x0
+            )
+            if is_bullet:
+                btype = "bullet"
+                meta["indent_level"] = indent
+                text = cleaned_text
             else:
-                if len(current_row) >= 2:
-                    rows.append(current_row)
-                current_row = [(idx, b)]
-                current_y = y
-        if len(current_row) >= 2:
-            rows.append(current_row)
+                hdr = detect_header_type(
+                    cfg, block, size_rank, median_size, page_height
+                )
+                if hdr:
+                    btype = f"header_{hdr}"
+                    meta["heading_level"] = hdr
+
+            entry = {"text": text, "bbox": block.get("bbox"), "type": btype}
+            entry.update(meta)
+            new_blocks.append(entry)
+            idx += 1
+
+        classified.append({**page, "blocks": new_blocks})
+    return classified
+
+
+# --------------------------------------------------------------------------- #
+# Table detection
+# --------------------------------------------------------------------------- #
+
+
+# pylint: disable=too-many-locals,too-many-branches,too-many-statements
+def detect_tables(
+    cfg: ExtractConfig, pages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Detect tables by aligned rows/columns."""
+    if not cfg.detect_tables:
+        return pages
+    result: List[Dict[str, Any]] = []
+    for page in pages:
+        blocks = page.get("blocks", [])
+        used: Set[int] = set()
+        tables: List[Dict[str, Any]] = []
+        sorted_blocks = sorted(
+            enumerate(blocks), key=lambda item: item[1].get("y0", 0)
+        )
+        # Group blocks into horizontal rows by Y proximity.
+        rows: List[List[Tuple[int, Dict[str, Any]]]] = []
+        current: List[Tuple[int, Dict[str, Any]]] = []
+        current_y: Optional[float] = None
+        for idx, block in sorted_blocks:
+            y_val = block.get("y0", 0)
+            if current_y is None or abs(y_val - current_y) <= cfg.y_tolerance:
+                current.append((idx, block))
+                current_y = y_val if current_y is None else current_y
+            else:
+                if len(current) >= 2:
+                    rows.append(current)
+                current = [(idx, block)]
+                current_y = y_val
+        if len(current) >= 2:
+            rows.append(current)
 
         i = 0
         while i < len(rows):
-            table_rows = [rows[i]]
+            base = rows[i]
+            base_cols = sorted(block[1].get("x0", 0) for block in base)
+            table_rows = [base]
             j = i + 1
-            # Compare column alignment between consecutive rows
-            first_x = sorted(b[1].get("x0", 0) for b in rows[i])
             while j < len(rows):
-                curr_x = sorted(b[1].get("x0", 0) for b in rows[j])
-                if len(curr_x) == len(first_x):
-                    aligned = all(abs(a - b) <= X_TOLERANCE for a, b in zip(first_x, curr_x))
-                    if aligned:
-                        table_rows.append(rows[j])
-                        j += 1
-                        continue
+                curr_cols = sorted(block[1].get("x0", 0) for block in rows[j])
+                # Require same column count; keep columns within x tolerance.
+                aligned = len(curr_cols) == len(base_cols) and all(
+                    abs(col_a - col_b) <= cfg.x_tolerance
+                    for col_a, col_b in zip(base_cols, curr_cols)
+                )
+                if aligned:
+                    table_rows.append(rows[j])
+                    j += 1
+                    continue
                 break
-
             if len(table_rows) >= 2:
-                table_data = []
-                all_indices = set()
-                for row in table_rows:
-                    sorted_cells = sorted(row, key=lambda x: x[1].get("x0", 0))
-                    table_data.append([cell[1].get("text", "").strip() for cell in sorted_cells])
-                    all_indices.update(cell[0] for cell in sorted_cells)
-
                 all_blocks = [cell[1] for row in table_rows for cell in row]
-                x0 = min(b.get("bbox", [0, 0, 0, 0])[0] for b in all_blocks)
-                y0 = min(b.get("bbox", [0, 0, 0, 0])[1] for b in all_blocks)
-                x1 = max(b.get("bbox", [0, 0, 0, 0])[2] for b in all_blocks)
-                y1 = max(b.get("bbox", [0, 0, 0, 0])[3] for b in all_blocks)
-
-                first_idx = min(all_indices)
-                tables.append({
-                    "rows": table_data,
-                    "bbox": [x0, y0, x1, y1],
-                    "start_idx": first_idx,
-                    "num_cols": len(table_data[0]) if table_data else 0,
-                })
-                used.update(all_indices)
-
+                table_data: List[List[str]] = []
+                indices: Set[int] = set()
+                for row in table_rows:
+                    sorted_cells = sorted(
+                        row, key=lambda item: item[1].get("x0", 0)
+                    )
+                    table_data.append(
+                        [
+                            cell[1].get("text", "").strip()
+                            for cell in sorted_cells
+                        ]
+                    )
+                    indices.update(cell[0] for cell in sorted_cells)
+                # Compute bounding box that spans all table cells.
+                x0 = min(
+                    block.get("bbox", [0, 0, 0, 0])[0] for block in all_blocks
+                )
+                y0 = min(
+                    block.get("bbox", [0, 0, 0, 0])[1] for block in all_blocks
+                )
+                x1 = max(
+                    block.get("bbox", [0, 0, 0, 0])[2] for block in all_blocks
+                )
+                y1 = max(
+                    block.get("bbox", [0, 0, 0, 0])[3] for block in all_blocks
+                )
+                tables.append(
+                    {
+                        "rows": table_data,
+                        "bbox": [x0, y0, x1, y1],
+                        "start_idx": min(indices),
+                    }
+                )
+                used.update(indices)
             i = j
 
-        # Rebuild blocks with tables inserted
-        new_blocks = []
-        for idx, b in enumerate(blocks):
+        new_blocks: List[Dict[str, Any]] = []
+        for idx, block in enumerate(blocks):
             if idx in used:
-                matching_tables = [t for t in tables if t["start_idx"] == idx]
-                if matching_tables:
-                    new_blocks.append({
-                        "type": "table",
-                        "rows": matching_tables[0]["rows"],
-                        "bbox": matching_tables[0]["bbox"],
-                        "num_cols": matching_tables[0]["num_cols"],
-                        "text": ""
-                    })
+                match = [
+                    table for table in tables if table["start_idx"] == idx
+                ]
+                if match:
+                    table_match = match[0]
+                    new_blocks.append(
+                        {
+                            "type": "table",
+                            "rows": table_match["rows"],
+                            "bbox": table_match["bbox"],
+                            "text": "",
+                        }
+                    )
             else:
-                new_blocks.append(b)
-
-        new_pages.append({"page": page.get("page"), "blocks": new_blocks, "tables": tables})
-
-    return new_pages
-
-
-# =============================================================================
-# OUTPUT WITH TABLES & HIERARCHY
-# =============================================================================
-
-def build_hierarchical_blocks(blocks: list[dict]) -> list[dict]:
-    # Group bullets into hierarchy based on indent_level.
-    result = []
-    stack = []
-
-    for b in blocks:
-        node = dict(b)
-        node["children"] = [c for c in b.get("children", [])]
-
-        if b.get("type") != "bullet":
-            stack.clear()
-            result.append(node)
-            continue
-
-        indent = int(b.get("indent_level", 0))
-        while stack and indent <= stack[-1][0]:
-            stack.pop()
-
-        if stack:
-            stack[-1][1]["children"].append(node)
-        else:
-            result.append(node)
-
-        stack.append((indent, node))
-
+                new_blocks.append(block)
+        result.append({**page, "blocks": new_blocks, "tables": tables})
     return result
 
 
-def save_json(pages_text: list[dict], path: str, encoding: str = "utf-8") -> None:
-    # Save extracted data as JSON with hierarchical bullets.
-    path = Path(path)
+# --------------------------------------------------------------------------- #
+# Hierarchy and outputs
+# --------------------------------------------------------------------------- #
+
+
+def build_bullet_hierarchy(
+    blocks: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Nest bullet items by indentation."""
+    out: List[Dict[str, Any]] = []
+    stack: List[Tuple[int, Dict[str, Any]]] = []
+    for block in blocks:
+        node = dict(block)
+        node["children"] = []
+        if block.get("type") != "bullet":
+            stack.clear()
+            out.append(node)
+            continue
+        indent = int(block.get("indent_level", 0))
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        if stack:
+            stack[-1][1]["children"].append(node)
+        else:
+            out.append(node)
+        stack.append((indent, node))
+    return out
+
+
+def build_document_structure(
+    pages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Build section tree using detected headers."""
+    level_map = {"header_h1": 1, "header_h2": 2, "header_h3": 3}
+    root = {"title": None, "level": 0, "content": [], "children": []}
+    stack: List[Dict[str, Any]] = [root]
+    for page in pages:
+        blocks = page.get("blocks_hier") or page.get("blocks") or []
+        for block in blocks:
+            block_copy = dict(block)
+            block_copy["page"] = page.get("page")
+            level = level_map.get(block_copy.get("type", ""))
+            if level:
+                while stack and stack[-1]["level"] >= level:
+                    stack.pop()
+                section = {
+                    "title": block_copy.get("text", "").strip(),
+                    "level": level,
+                    "page": page.get("page"),
+                    "content": [],
+                    "children": [],
+                }
+                stack[-1]["children"].append(section)
+                stack.append(section)
+            else:
+                stack[-1]["content"].append(block_copy)
+    return root["children"]
+
+
+def save_json(pages: List[Dict[str, Any]], path: Path, encoding: str) -> None:
+    """Write structured JSON (pages + document sections)."""
+    enriched: List[Dict[str, Any]] = []
+    for page in pages:
+        hier = build_bullet_hierarchy(page.get("blocks", []))
+        enriched.append({**page, "blocks_hier": hier})
+    doc_sections = build_document_structure(enriched)
+    payload = {"pages": enriched, "document": {"sections": doc_sections}}
     path.parent.mkdir(parents=True, exist_ok=True)
-    enriched_pages = []
-    for page in pages_text:
-        hier = build_hierarchical_blocks(page.get("blocks", []))
-        enriched_pages.append({
-            **page,
-            "blocks_hier": hier,
-        })
-
-    json_str = json.dumps(enriched_pages, ensure_ascii=False, indent=2)
-    path.write_text(json_str, encoding=encoding)
-    logger.info(f"JSON saved: {path}")
+    json_text = json.dumps(payload, ensure_ascii=False, indent=2)
+    path.write_text(json_text, encoding=encoding)
+    logging.info("JSON saved: %s", path)
 
 
-def format_markdown_table(rows: list[list[str]]) -> str:
-    # Format rows as a Markdown table with column alignment.
+def format_markdown_table(rows: List[List[str]]) -> str:
+    """Render a Markdown table from a list of rows."""
     if not rows or not rows[0]:
         return ""
-
-    max_cols = max(len(row) for row in rows)
-    normalized = [row + [""] * (max_cols - len(row)) for row in rows]
-
-    col_widths = [0] * max_cols
+    cols = max(len(row) for row in rows)
+    normalized = [row + [""] * (cols - len(row)) for row in rows]
+    widths = [0] * cols
     for row in normalized:
-        for i, cell in enumerate(row):
-            col_widths[i] = max(col_widths[i], len(str(cell)))
-    col_widths = [max(w, 3) for w in col_widths]
-
-    lines = []
-    header = "| " + " | ".join(str(cell).ljust(col_widths[i]) for i, cell in enumerate(normalized[0])) + " |"
-    lines.append(header)
-    separator = "|" + "|".join("-" * (w + 2) for w in col_widths) + "|"
-    lines.append(separator)
+        for idx, cell in enumerate(row):
+            widths[idx] = max(widths[idx], len(str(cell)))
+    widths = [max(3, width) for width in widths]
+    header_line = "| " + " | ".join(
+        str(cell).ljust(widths[idx]) for idx, cell in enumerate(normalized[0])
+    ) + " |"
+    sep_line = "|" + "|".join("-" * (width + 2) for width in widths) + "|"
+    data_lines = []
     for row in normalized[1:]:
-        data_row = "| " + " | ".join(str(cell).ljust(col_widths[i]) for i, cell in enumerate(row)) + " |"
-        lines.append(data_row)
-    return "\n".join(lines)
+        cells = " | ".join(
+            str(cell).ljust(widths[idx]) for idx, cell in enumerate(row)
+        )
+        data_lines.append(f"| {cells} |")
+    return "\n".join([header_line, sep_line, *data_lines])
 
 
-def save_markdown(pages_text: list[dict], path: str, encoding: str = "utf-8") -> None:
-    # Convert extracted data to Markdown with proper table formatting.
-    path = Path(path)
+def save_markdown(
+    pages: List[Dict[str, Any]], path: Path, encoding: str
+) -> None:
+    """Render Markdown and append a per-page view for page context."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = []
+    lines: List[str] = []
 
-    def merge_bullet_fragments(blocks: list[dict]) -> list[dict]:
-        # Merge consecutive bullet fragments that likely belong to the same line.
-        merged = []
-        for b in blocks:
-            b = dict(b)
-            children = b.get("children", [])
-            if children:
-                b["children"] = merge_bullet_fragments(children)
+    def merge_fragments(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        for block in blocks:
+            item = dict(block)
+            if item.get("children"):
+                item["children"] = merge_fragments(item.get("children", []))
             if (
                 merged
-                and b.get("type") == "bullet"
+                and item.get("type") == "bullet"
                 and merged[-1].get("type") == "bullet"
                 and not merged[-1].get("children")
-                and not b.get("children")
+                and not item.get("children")
             ):
-                prev_indent = int(merged[-1].get("indent_level", 0))
-                curr_indent = int(b.get("indent_level", 0))
-                # If indents are close, treat as wrapped line
-                if abs(prev_indent - curr_indent) <= 6:
-                    merged[-1]["text"] = (merged[-1].get("text", "").rstrip() + " " + b.get("text", "").lstrip()).strip()
+                prev = int(merged[-1].get("indent_level", 0))
+                curr = int(item.get("indent_level", 0))
+                if abs(prev - curr) <= 6:
+                    merged[-1]["text"] = (
+                        merged[-1].get("text", "").rstrip()
+                        + " "
+                        + item.get("text", "").lstrip()
+                    ).strip()
                     continue
-            merged.append(b)
+            merged.append(item)
         return merged
 
-    def render_block(block: dict, depth: int = 0):
+    def render_block(block: Dict[str, Any], depth: int = 0) -> None:
         btype = block.get("type", "text")
         text = (block.get("text") or "").rstrip()
-
         if btype == "table":
             rows = block.get("rows", [])
             if rows:
                 lines.append("\n" + format_markdown_table(rows) + "\n")
             return
-
-        if btype.startswith("header_"):
-            lvl = btype.split("_")[1]
-            marker = "#" * (1 if lvl == "h1" else 2 if lvl == "h2" else 3)
-            lines.append(f"{marker} {text}\n")
-            return
-
         if btype == "bullet":
-            indent = min(depth, 3)
-            prefix = "  " * indent + "- "
+            prefix = "  " * min(depth, 3) + "- "
             lines.append(f"{prefix}{text}\n")
             for child in block.get("children", []):
                 render_block(child, depth + 1)
             return
-
         lines.append(f"{text}\n")
 
-    for p in pages_text:
-        lines.append(f"## Page {p['page']}\n")
-        blocks = p.get("blocks_hier") or p.get("blocks", [])
-        blocks = merge_bullet_fragments(blocks)
-        for b in blocks:
-            render_block(b, depth=0)
+    def render_section(section: Dict[str, Any]) -> None:
+        title = section.get("title", "")
+        level = section.get("level", 1)
+        lines.append(f"{'#' * min(level, 6)} {title}\n")
+        for item in merge_fragments(section.get("content", [])):
+            render_block(item, depth=0)
+        for child in section.get("children", []):
+            render_section(child)
+
+    doc_sections = build_document_structure(pages)
+    if doc_sections:
+        # Render structured view
+        for section in doc_sections:
+            render_section(section)
+
+        # Always provide a per-page view so readers see original page breaks.
+        lines.append("\n---\n## Per-page view\n")
+
+    for page in pages:
+        lines.append(f"### Page {page.get('page')}\n")
+        blocks = merge_fragments(
+            page.get("blocks_hier") or page.get("blocks", [])
+        )
+        for block in blocks:
+            render_block(block, depth=0)
         lines.append("\n")
 
-    md_content = "\n".join(lines)
-    Path(path).write_text(md_content, encoding=encoding)
-    logger.info(f"Markdown saved: {path}")
+    path.write_text("\n".join(lines), encoding=encoding)
+    logging.info("Markdown saved: %s", path)
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    # CLI arguments for the PDF extractor.
+def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
+    """Define and parse CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="PDF extractor with OCR, header/footer filtering, and optional table detection.",
+        description=(
+            "PDF extractor with OCR, header/footer filtering, optional table "
+            "detection, and structured outputs."
+        ),
     )
     parser.add_argument("pdf_path", help="Path to the PDF file")
-    parser.add_argument("--output-json", "-j", default=DEFAULT_OUTPUT_JSON, help=f"JSON output path (default: {DEFAULT_OUTPUT_JSON})")
-    parser.add_argument("--output-md", "-m", default=DEFAULT_OUTPUT_MD, help=f"Markdown output path (default: {DEFAULT_OUTPUT_MD})")
-    parser.add_argument("--no-json", action="store_true", help="Skip writing JSON output")
-    parser.add_argument("--no-md", action="store_true", help="Skip writing Markdown output")
-    parser.add_argument("--pages", help="Page selection, e.g. '1-3,5' (1-based)")
+    parser.add_argument(
+        "--output-json",
+        "-j",
+        default=DEFAULT_OUTPUT_JSON,
+        help=f"JSON output path (default: {DEFAULT_OUTPUT_JSON})",
+    )
+    parser.add_argument(
+        "--output-md",
+        "-m",
+        default=DEFAULT_OUTPUT_MD,
+        help=f"Markdown output path (default: {DEFAULT_OUTPUT_MD})",
+    )
+    parser.add_argument(
+        "--no-json",
+        action="store_true",
+        help="Skip writing JSON output",
+    )
+    parser.add_argument(
+        "--no-md",
+        action="store_true",
+        help="Skip writing Markdown output",
+    )
+    parser.add_argument(
+        "--pages",
+        help="Page selection, e.g. '1-3,5' (1-based)",
+    )
     parser.add_argument("--password", help="Password for encrypted PDFs")
-    parser.add_argument("--detect-tables", action="store_true", help="Enable alignment-based table detection")
-    parser.add_argument("--ocr", dest="use_ocr", action="store_true", default=True, help="Enable OCR fallback on image-heavy pages (default)")
-    parser.add_argument("--no-ocr", dest="use_ocr", action="store_false", help="Disable OCR fallback")
-    parser.add_argument("--force-ocr", action="store_true", help="Force OCR on all pages")
-    parser.add_argument("--encoding", default="utf-8", help="Encoding for output files (default: utf-8)")
-    parser.add_argument("--verbose", action="store_true", help="Verbose logging")
+    parser.add_argument(
+        "--detect-tables",
+        action="store_true",
+        help="Enable table detection",
+    )
+    parser.add_argument(
+        "--ocr",
+        dest="use_ocr",
+        action="store_true",
+        default=True,
+        help="Enable OCR fallback on image-heavy pages (default)",
+    )
+    parser.add_argument(
+        "--no-ocr",
+        dest="use_ocr",
+        action="store_false",
+        help="Disable OCR fallback",
+    )
+    parser.add_argument(
+        "--force-ocr",
+        action="store_true",
+        help="Force OCR on all pages",
+    )
+    parser.add_argument(
+        "--encoding",
+        default="utf-8",
+        help="Encoding for output files",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Verbose logging",
+    )
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    # Main extraction pipeline with CLI.
+def build_config(args: argparse.Namespace) -> ExtractConfig:
+    """Convert CLI args to ExtractConfig."""
+    return ExtractConfig(
+        pdf_path=Path(args.pdf_path),
+        output_json=Path(args.output_json),
+        output_md=Path(args.output_md),
+        password=args.password,
+        pages=parse_page_spec(args.pages),
+        detect_tables=args.detect_tables,
+        use_ocr=args.use_ocr,
+        force_ocr=args.force_ocr,
+        encoding=args.encoding,
+    )
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    """CLI entry point."""
     args = parse_args(argv)
-    log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
-        level=log_level,
+        level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    pdf_path = Path(args.pdf_path)
-    if not pdf_path.exists():
-        logger.error(f"PDF not found: {pdf_path}")
+    cfg = build_config(args)
+    if not cfg.pdf_path.exists():
+        logging.error("PDF not found: %s", cfg.pdf_path)
         return 1
 
-    try:
-        page_filter = parse_page_spec(args.pages) if args.pages else None
-    except ValueError as exc:
-        logger.error(f"Invalid page selection '{args.pages}': {exc}")
-        return 3
-
-    global USE_OCR_FOR_IMAGE_PAGES, FORCE_OCR, DETECT_TABLES
-    USE_OCR_FOR_IMAGE_PAGES = args.use_ocr
-    FORCE_OCR = args.force_ocr
-    DETECT_TABLES = args.detect_tables
-
     print("=" * 70)
-    print("PDF Extractor with Tables & Hierarchical Structure")
+    print("PDF Extractor")
     print("=" * 70)
-    logger.info(f"Extracting PDF: {pdf_path}")
 
     try:
-        logger.info("[1/5] Extracting text blocks...")
-        pages_text = extract_pages(str(pdf_path), password=args.password, page_filter=page_filter)
+        logging.info("[1/5] Extracting text blocks...")
+        pages = extract_pages(cfg)
+        logging.info("[2/5] Detecting headers/footers...")
+        header_footer = detect_headers_footers(cfg, pages)
+        logging.info("[3/5] Filtering irrelevant content...")
+        filtered = filter_irrelevant(cfg, pages, header_footer)
+        if cfg.detect_tables:
+            logging.info("[4/5] Detecting tables...")
+            filtered = detect_tables(cfg, filtered)
+        else:
+            logging.info("[4/5] Skipping table detection")
+        logging.info("[5/5] Classifying blocks...")
+        classified = classify(cfg, filtered)
     except PasswordRequiredError as exc:
-        logger.error(str(exc))
+        logging.error("%s", exc)
         return 2
-    except PdfOpenError as exc:
-        logger.error(str(exc))
-        return 3
-    except ExtractionError as exc:
-        logger.error(str(exc))
+    except (PdfOpenError, ExtractionError) as exc:
+        logging.error("%s", exc)
         return 3
 
-    total_blocks = sum(len(p["blocks"]) for p in pages_text)
-    logger.info(f"Found {len(pages_text)} pages, {total_blocks} blocks")
-
-    logger.info("[2/5] Detecting headers and footers...")
-    header_footer_set = detect_headers_footers(pages_text)
-    logger.info(f"Detected {len(header_footer_set)} header/footer texts")
-
-    logger.info("[3/5] Filtering irrelevant content...")
-    filtered_pages = filter_irrelevant_content(pages_text, header_footer_set)
-    filtered_blocks = sum(len(p["blocks"]) for p in filtered_pages)
-    removed = total_blocks - filtered_blocks
-    logger.info(f"Removed {removed} blocks, {filtered_blocks} remain")
-
-    if DETECT_TABLES:
-        logger.info("[4/5] Detecting tables with column alignment...")
-        table_pages = detect_tables(filtered_pages)
-        table_count = sum(len(p.get("tables", [])) for p in table_pages)
-        logger.info(f"Detected {table_count} table(s)")
-    else:
-        logger.info("[4/5] Skipping table detection (DETECT_TABLES=False)")
-        table_pages = filtered_pages
-
-    logger.info("[5/5] Classifying blocks...")
-    classified_pages = classify_blocks(table_pages)
-    header_count = sum(
-        1 for p in classified_pages
-        for b in p["blocks"]
-        if str(b.get("type", "")).startswith("header_")
-    )
-    bullet_count = sum(
-        1 for p in classified_pages
-        for b in p["blocks"]
-        if b.get("type") == "bullet"
-    )
-    text_count = sum(
-        1 for p in classified_pages
-        for b in p["blocks"]
-        if b.get("type") == "text"
-    )
-    final_table_count = sum(
-        1 for p in classified_pages
-        for b in p["blocks"]
-        if b.get("type") == "table"
-    )
-    logger.info(f"Classified: {header_count} headings, {bullet_count} bullets, {text_count} text, {final_table_count} tables")
+    total_blocks = sum(len(page.get("blocks", [])) for page in classified)
+    logging.info("Pages: %s, Blocks: %s", len(classified), total_blocks)
 
     if args.no_json and args.no_md:
-        logger.info("No outputs requested (--no-json and --no-md set); skipping file writes")
+        logging.info("No outputs requested; skipping writes.")
     else:
-        logger.info("Saving outputs...")
         if not args.no_json:
-            json_path = args.output_json or DEFAULT_OUTPUT_JSON
-            save_json(classified_pages, json_path, encoding=args.encoding)
+            save_json(classified, cfg.output_json, encoding=cfg.encoding)
         if not args.no_md:
-            md_path = args.output_md or DEFAULT_OUTPUT_MD
-            save_markdown(classified_pages, md_path, encoding=args.encoding)
+            save_markdown(classified, cfg.output_md, encoding=cfg.encoding)
 
     print("\n" + "=" * 70)
     print("Extraction complete!")
     if not args.no_json:
-        print(f"  JSON: {args.output_json or DEFAULT_OUTPUT_JSON}")
+        print(f"  JSON: {cfg.output_json}")
     if not args.no_md:
-        print(f"  Markdown: {args.output_md or DEFAULT_OUTPUT_MD}")
+        print(f"  Markdown: {cfg.output_md}")
     print("=" * 70)
     return 0
 

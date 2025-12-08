@@ -1,6 +1,8 @@
-# Question generation using local LLM (Ollama).
-# Builds exam-style multiple-choice questions from extracted PDF content.
+# flake8: noqa: E501
+"""Generate multiple-choice questions from extracted PDF content using
+Ollama."""
 
+import argparse
 import json
 import logging
 import textwrap
@@ -12,8 +14,8 @@ import requests
 # CONFIGURATION
 # =============================================================================
 
-EXTRACTED_JSON = Path("output") / "extracted_text.json"
-OUTPUT_JSON = Path("output") / "questions.json"
+EXTRACTED_JSON = Path("all_output") / "extracted_text_output" / "extracted_text.json"
+OUTPUT_JSON = Path("all_output") / "generated_questions_output" / "questions.json"
 
 # Ollama configuration
 OLLAMA_BASE_URL = "http://localhost:11434"
@@ -32,7 +34,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 def build_prompt(text_block: str) -> str:
-    # Build structured prompt for MCQ generation with quality guidelines.
+    """Build structured prompt for MCQ generation with quality guidelines."""
     prompt_template = """
     You can be either an experienced university lecturer creating exam questions or a super
     curious student trying to test your understanding of complex material.
@@ -114,7 +116,7 @@ def build_prompt(text_block: str) -> str:
 # =============================================================================
 
 def call_ollama(prompt: str) -> str:
-    # Send prompt to Ollama and return the response.
+    """Send prompt to Ollama and return the response."""
     url = f"{OLLAMA_BASE_URL}/api/generate"
     payload = {
         "model": OLLAMA_MODEL,
@@ -129,10 +131,13 @@ def call_ollama(prompt: str) -> str:
         return data.get("response", "")
 
     except requests.exceptions.Timeout:
-        logger.error(f"Ollama request timed out after {OLLAMA_TIMEOUT}s")
+        logger.error(
+            "Ollama request timed out after %ss",
+            OLLAMA_TIMEOUT,
+        )
         raise
     except requests.exceptions.RequestException as exc:
-        logger.error(f"Ollama request failed: {exc}")
+        logger.error("Ollama request failed: %s", exc)
         raise
 
 
@@ -141,7 +146,7 @@ def call_ollama(prompt: str) -> str:
 # =============================================================================
 
 def extract_json_from_text(text: str) -> dict | None:
-    # Extract and parse JSON from LLM output (handles code fences and noise).
+    """Extract JSON from LLM output (handles code fences/noise)."""
     cleaned = text
 
     # Remove code fences if present
@@ -179,7 +184,9 @@ def extract_json_from_text(text: str) -> dict | None:
     for candidate in candidates:
         try:
             parsed = json.loads(candidate)
-            return {"questions": parsed} if isinstance(parsed, list) else parsed
+            if isinstance(parsed, list):
+                return {"questions": parsed}
+            return parsed
         except json.JSONDecodeError:
             continue
 
@@ -188,8 +195,7 @@ def extract_json_from_text(text: str) -> dict | None:
 
 
 def normalize_questions(parsed: dict | list) -> list[dict]:
-    # Normalize question format and handle variations in field names.
-    # Accepts either a list of dicts or a dict with a 'questions' key.
+    """Normalize question format; accept list or dict with 'questions'."""
     questions = None
 
     if isinstance(parsed, list):
@@ -215,7 +221,7 @@ def normalize_questions(parsed: dict | list) -> list[dict]:
 
 
 def format_questions(questions: list[dict]) -> list[dict]:
-    # Format questions with numbered prefixes and letter labels for options.
+    """Format questions with numbered prefixes and letter labels."""
     formatted = []
     letters = ["A", "B", "C", "D"]
 
@@ -252,15 +258,22 @@ def format_questions(questions: list[dict]) -> list[dict]:
 # TEXT BLOCK LOADING
 # =============================================================================
 
+# pylint: disable=too-many-locals
 def load_text_blocks(json_file: str) -> list[str]:
-    # Load and filter text blocks from extracted PDF data.
+    """Load and filter text blocks from extracted PDF data."""
     path = Path(json_file)
     if not path.exists():
-        logger.error(f"File not found: {json_file}")
+        logger.error("File not found: %s", json_file)
         return []
 
-    with path.open("r", encoding="utf-8") as f:
-        pages = json.load(f)
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    # Support both legacy (list of pages) and new structured JSON with "pages".
+    pages = data.get("pages") if isinstance(data, dict) else data
+    if not isinstance(pages, list):
+        logger.error("Unexpected JSON structure: expected list or dict['pages']")
+        return []
 
     blocks = []
 
@@ -268,7 +281,12 @@ def load_text_blocks(json_file: str) -> list[str]:
     font_sizes = [
         float(block.get("font_size", 0))
         for page in pages
-        for block in page.get("blocks", [])
+        for block in (
+            page.get("blocks_hier")
+            or page.get("blocks", [])
+            if isinstance(page, dict)
+            else []
+        )
         if block.get("font_size", 0) > 0
     ]
 
@@ -285,7 +303,10 @@ def load_text_blocks(json_file: str) -> list[str]:
 
     # Extract meaningful text blocks
     for page in pages:
-        for block in page.get("blocks", []):
+        if not isinstance(page, dict):
+            continue
+        page_blocks = page.get("blocks_hier") or page.get("blocks", [])
+        for block in page_blocks:
             text = (block.get("text") or "").strip()
             btype = block.get("type", "text")
             fsize = block.get("font_size") or 0
@@ -312,10 +333,10 @@ def load_text_blocks(json_file: str) -> list[str]:
 
     # Limit to MAX_BLOCKS
     if len(blocks) > MAX_BLOCKS:
-        logger.info(f"Using first {MAX_BLOCKS} of {len(blocks)} blocks")
+        logger.info("Using first %s of %s blocks", MAX_BLOCKS, len(blocks))
         blocks = blocks[:MAX_BLOCKS]
 
-    logger.info(f"Loaded {len(blocks)} text blocks for processing")
+    logger.info("Loaded %s text blocks for processing", len(blocks))
     return blocks
 
 
@@ -324,44 +345,46 @@ def load_text_blocks(json_file: str) -> list[str]:
 # =============================================================================
 
 def generate_questions_from_blocks(blocks: list[str]) -> list[dict]:
-    # Generate MCQ questions from text blocks using Ollama.
+    """Generate MCQ questions from text blocks using Ollama."""
     all_questions = []
 
     for i, block in enumerate(blocks, start=1):
-        logger.info(f"Processing block {i}/{len(blocks)}")
-        logger.debug(f"Block preview: {block[:200]}...")
+        logger.info("Processing block %s/%s", i, len(blocks))
+        logger.debug("Block preview: %s...", block[:200])
 
         prompt = build_prompt(block)
 
         try:
             raw_answer = call_ollama(prompt)
         except requests.exceptions.ConnectionError:
-            logger.error("Cannot connect to Ollama. Is 'ollama serve' running?")
+            logger.error(
+                "Cannot connect to Ollama. Is 'ollama serve' running?"
+            )
             break
         except requests.exceptions.Timeout:
-            logger.error(f"Timeout on block {i}")
+            logger.error("Timeout on block %s", i)
             continue
-        except Exception as e:
-            logger.error(f"Error calling Ollama: {e}")
+        except requests.exceptions.RequestException as exc:
+            logger.error("Error calling Ollama: %s", exc)
             continue
 
         # Parse response
         parsed = extract_json_from_text(raw_answer)
         if not parsed:
-            logger.warning(f"Could not parse JSON from block {i}")
+            logger.warning("Could not parse JSON from block %s", i)
             continue
 
         questions = normalize_questions(parsed)
         if questions:
             all_questions.extend(questions)
-            logger.info(f"Generated {len(questions)} questions")
+            logger.info("Generated %s questions", len(questions))
 
             # Stop early if target reached
             if len(all_questions) >= TARGET_QUESTIONS:
-                logger.info(f"Reached target of {TARGET_QUESTIONS} questions")
+                logger.info("Reached target of %s questions", TARGET_QUESTIONS)
                 break
         else:
-            logger.warning(f"No valid questions from block {i}")
+            logger.warning("No valid questions from block %s", i)
 
     # Trim to target count
     if len(all_questions) > TARGET_QUESTIONS:
@@ -374,8 +397,27 @@ def generate_questions_from_blocks(blocks: list[str]) -> list[dict]:
 # MAIN
 # =============================================================================
 
-def main():
-    # Main question generation pipeline.
+def parse_args(argv=None) -> argparse.Namespace:
+    """CLI to allow custom input/output paths."""
+    parser = argparse.ArgumentParser(
+        description="Generate MCQs from extracted text JSON."
+    )
+    parser.add_argument(
+        "--input-json",
+        default=str(EXTRACTED_JSON),
+        help=f"Path to extracted text JSON (default: {EXTRACTED_JSON})",
+    )
+    parser.add_argument(
+        "--output-json",
+        default=str(OUTPUT_JSON),
+        help=f"Path to write generated questions (default: {OUTPUT_JSON})",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    """Main question generation pipeline."""
+    args = parse_args(argv)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -384,7 +426,10 @@ def main():
     logger.info("Starting question generation")
 
     # Load text blocks
-    blocks = load_text_blocks(EXTRACTED_JSON)
+    in_path = Path(args.input_json)
+    out_path = Path(args.output_json)
+
+    blocks = load_text_blocks(in_path)
     if not blocks:
         logger.error("No text blocks loaded. Exiting.")
         return
@@ -393,7 +438,10 @@ def main():
     logger.info("Generating questions from blocks...")
     questions = generate_questions_from_blocks(blocks)
     formatted_questions = format_questions(questions)
-    logger.info(f"Total questions generated: {len(formatted_questions)}")
+    logger.info(
+        "Total questions generated: %s",
+        len(formatted_questions),
+    )
 
     # Build output structure
     result = {
@@ -405,13 +453,12 @@ def main():
     }
 
     # Save to file
-    out_path = Path(OUTPUT_JSON)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(result, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
-    logger.info(f"Questions saved to {OUTPUT_JSON}")
+    logger.info("Questions saved to %s", out_path)
 
 
 if __name__ == "__main__":

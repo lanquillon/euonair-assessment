@@ -33,8 +33,8 @@ docs/_build/
 *.swo
 
 # Project artifacts
-h5p_output/
-output/
+# h5p_output/
+# output/
 extracted_text.json
 extracted_text.md
 questions.json

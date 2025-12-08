@@ -32,11 +32,6 @@ docs/_build/
 *.swp
 *.swo
 
-# Project artifacts
-# h5p_output/
-# output/
-
-
-# Sonstiges
+# Project artifacts & Backups
 BACKUP/
 all_output/

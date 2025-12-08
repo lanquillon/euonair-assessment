@@ -54,3 +54,13 @@ Outputs: `extracted_text.json`, `extracted_text.md` (unless skipped).
 - Ollama connection errors: confirm `ollama serve` is running and the model name matches.
 - Tesseract not found: install Tesseract and set `TESSERACT_CMD` to the executable path.
 - Missing outputs: check file paths/flags and rerun the step.
+
+
+--------------------------------------------------------------------
+
+## Documentation
+<!-- - Kurze Beschreibung der verwendeten KI-Methode/Prompting-Strategie (kann in README integriert sein) -->
+- 
+
+
+

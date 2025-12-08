@@ -34,31 +34,29 @@ logger = logging.getLogger(__name__)
 def build_prompt(text_block: str) -> str:
     # Build structured prompt for MCQ generation with quality guidelines.
     prompt_template = """
-    You are an experienced university lecturer creating exam questions.
+    You can be either an experienced university lecturer creating exam questions or a super
+    curious student trying to test your understanding of complex material.
+    First of all, define bloom levels for questions and ask yourself to create questions
+    using levels 1, 2 and 3.
 
-    TASK:
-    Design {question_count} HIGH-QUALITY, EXAM-STYLE MULTIPLE-CHOICE QUESTIONS in ENGLISH
-    for undergraduate/graduate students based ONLY on the source text below.
+    Then, follow the detailed instructions below successively to generate high-quality multiple-choice questions.
 
-    REQUIREMENTS:
+    -->Design {question_count} HIGH-QUALITY, EXAM-STYLE MULTIPLE-CHOICE QUESTIONS in ENGLISH
+    for graduate students (that means higher education and academia is the target group)
+    based on those requirements:
 
     1. LANGUAGE & CONTENT
        - Write EVERYTHING in ENGLISH
        - Do NOT ask about word meanings, translations, or quoted phrases
        - Focus on concepts, principles, and application
 
-    2. BLOOM'S TAXONOMY
-       - At least 2 questions at "Understand" level or higher
-       - At least 1 question at "Apply" or "Analyze" level
-       - Avoid pure memorization questions
-
-    3. QUESTION QUALITY
+    2. QUESTION QUALITY
        - Clear, self-contained stem that can be answered without seeing options
        - Paraphrase concepts; don't copy sentences verbatim
        - Focus on important ideas, not trivial details
        - Stems must reference specific concepts/techniques from the source (e.g., modularity, table detection); do NOT refer to "the text" or "the author"
        - BAN phrases like "according to the text/author"; if such wording appears, rewrite the stem to name the specific concept directly
-       - Avoid vague summary stems like "What is the main challenge..."; rewrite to target a concrete concept or brief scenario
+       - Avoid vague summary stems like "What is the main challenge..."; rewrite to target a concrete concept or brief scenario/use-case
        - At least 2 stems should include a short scenario/application that tests applying a concept, not just recalling it
        - Cover different concepts across the text; do not repeat the same idea twice
        - Vary stem styles (definition/contrast, scenario/application, diagnosis/consequence) to keep questions diverse
@@ -79,22 +77,21 @@ def build_prompt(text_block: str) -> str:
     - "question": question stem (string)
     - "options": array of 4 answer options [A, B, C, D]
     - "correct_answer_index": index 0-3 of correct option
-    - "bloom_level": one of ["remember", "understand", "apply", "analyze", "evaluate", "create"]
-    - "explanation": justification for correct answer
+    - "bloom_level": one of ["remember", "understand", "apply"]
+    - "explanation": scientific justification for correct answer (and source-based reasoning)
 
     EXAMPLE:
     [
-      {{
-        "question": "Which statement best describes the role of feedback in an interactive system?",
+      {{"question": "User drags a folder and animation appears on screen showing files moving from one location to another. This is an example of:",
         "options": [
-          "It stores user data permanently without any user interaction.",
-          "It informs the user about the current system state and consequences of actions.",
-          "It prevents all possible user errors automatically.",
-          "It replaces the need for user training and documentation."
+          "Error Prevention",
+          "Visibility of status",
+          "Simplicity",
+          "Consistency"
         ],
         "correct_answer_index": 1,
         "bloom_level": "understand",
-        "explanation": "Good feedback keeps users informed about system state and action consequences. It doesn't prevent all errors or eliminate the need for training, but helps users build a correct mental model."
+        "explanation": "Animation provides real-time feedback, letting the user see what's happening (files are moving, not frozen) and confirming the system is working, fulfilling Nielsen's principle of keeping users informed of system status."
       }}
     ]
 

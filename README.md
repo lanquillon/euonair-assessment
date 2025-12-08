@@ -43,9 +43,11 @@ Outputs default to `all_output/extracted_text_output/` (`extracted_text.json`, `
 - Run: `python h5p_export.py` -> `.h5p` files in `all_output/h5p_output/`
 - Uses `all_output/generated_questions_output/questions.json` by default; validates basics before writing packages.
 
+For additional command variants (OCR/no-OCR, tables, page subsets, custom paths), see `commands.md`.
+
 ## Tests
 - Pytest: `pytest`
-- Unittest: `python -m unittest discover`
+- Unittest: `python -m unittest discover -s tests -p "test_*.py"`
 
 ## Verification
 - Review `extracted_text.md` for extraction quality before generating questions.
@@ -64,5 +66,5 @@ Outputs default to `all_output/extracted_text_output/` (`extracted_text.json`, `
 ##### Kurze Beschreibung der verwendeten KI-Methode/Prompting-Strategie
 
 Das KI-Setup umfasst drei Stufen: (1) Extraktion/Strukturierung der PDF-Inhalte (Header/Footer/Page-Filter, optionale OCR, Tabellenerkennung) in JSON/Markdown. (2) Generierung von Multiple-Choice-Fragen über ein lokales LLM (Ollama, Modell: llama2) auf Basis der strukturierten JSON-Blöcke. (3) Export im H5P-Format für LMS-Integration.
-Der zentrale Prompt in question_generation.py erzwingt klare Frage-/Antwortformate (Bloom-Level, Quelle, Index + Buchstabe + Erklärung). Neben dem Prompt-Katalog (https://coda.io/@kic/prompt-katalog) flossen eigene Prompting-Erfahrungen und wissenschaftliche Literatur ein; ChatGPT & Claude halfen beim Feinschliff. Deep-Research diente für Best Practices/Cheat-Sheets zu Prompt-Design und LLM-Evaluierung (v. a. Open-Source-Modelle) inkl. Literaturrecherche. Da ich Programmieranfängerin bin, kamen mehrere LLMs und Selbstrecherche zum Einsatz, um KI-gestützt sauberen, optimierten Code zu erstellen.
 
+Der zentrale Prompt in question_generation.py erzwingt klare Frage-/Antwortformate (Bloom-Level, Quelle, Index + Buchstabe + Erklärung). Neben dem Prompt-Katalog (https://coda.io/@kic/prompt-katalog) flossen eigene Prompting-Erfahrungen und wissenschaftliche Literatur ein; ChatGPT & Claude halfen beim Feinschliff. Deep-Research diente für Best Practices/Cheat-Sheets zu Prompt-Design und LLM-Evaluierung (v. a. Open-Source-Modelle) inkl. Literaturrecherche. Da ich Programmieranfängerin bin, kamen mehrere LLMs und Selbstrecherche zum Einsatz, um KI-gestützt sauberen, optimierten Code zu erstellen.

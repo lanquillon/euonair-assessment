@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 def build_prompt(text_block: str) -> str:
     """Build structured prompt for MCQ generation with quality guidelines."""
+    # Template encodes quality rules (Bloom levels, scenarios, 4 options).
     prompt_template = """
     You can be either an experienced university lecturer creating exam questions or a super
     curious student trying to test your understanding of complex material.
@@ -314,12 +315,12 @@ def load_text_blocks(json_file: str) -> list[str]:
             if not text:
                 continue
 
-            # Include longer paragraphs and bullets
+            # Prefer longer paragraphs/bullets to avoid noisy fragments.
             if btype in ("text", "bullet") and len(text) > 40:
                 blocks.append(text)
                 continue
 
-            # Include headings (by size or type)
+            # Treat large text or explicit headers as section anchors.
             is_heading = (
                 (header_threshold and fsize >= header_threshold) or
                 btype.startswith("header_")
@@ -331,7 +332,7 @@ def load_text_blocks(json_file: str) -> list[str]:
         logger.warning("No suitable text blocks found in extracted data")
         return []
 
-    # Limit to MAX_BLOCKS
+    # Limit to MAX_BLOCKS to keep the prompt concise.
     if len(blocks) > MAX_BLOCKS:
         logger.info("Using first %s of %s blocks", MAX_BLOCKS, len(blocks))
         blocks = blocks[:MAX_BLOCKS]
@@ -368,7 +369,7 @@ def generate_questions_from_blocks(blocks: list[str]) -> list[dict]:
             logger.error("Error calling Ollama: %s", exc)
             continue
 
-        # Parse response
+        # Parse and normalize LLM output; skip block on parse failure.
         parsed = extract_json_from_text(raw_answer)
         if not parsed:
             logger.warning("Could not parse JSON from block %s", i)
@@ -379,7 +380,7 @@ def generate_questions_from_blocks(blocks: list[str]) -> list[dict]:
             all_questions.extend(questions)
             logger.info("Generated %s questions", len(questions))
 
-            # Stop early if target reached
+            # Stop early once we hit the target count to keep runtime short.
             if len(all_questions) >= TARGET_QUESTIONS:
                 logger.info("Reached target of %s questions", TARGET_QUESTIONS)
                 break

@@ -269,6 +269,7 @@ def detect_headers_footers(
     cfg: ExtractConfig, pages: List[Dict[str, Any]]
 ) -> Set[str]:
     """Find repeating header/footer texts across pages."""
+    # Count texts that appear in top/bottom bands on many pages.
     headers: Dict[str, int] = defaultdict(int)
     footers: Dict[str, int] = defaultdict(int)
     for page in pages:
@@ -308,6 +309,7 @@ def filter_irrelevant(
     cfg: ExtractConfig, pages: List[Dict[str, Any]], header_footer: Set[str]
 ) -> List[Dict[str, Any]]:
     """Remove detected headers/footers and page numbers (also by position)."""
+    # Drop text if it matches detected headers/footers or sits in page bands.
     targets = {text.lower().strip() for text in header_footer}
     cleaned: List[Dict[str, Any]] = []
     for page in pages:
@@ -522,6 +524,7 @@ def detect_tables(
     cfg: ExtractConfig, pages: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     """Detect tables by aligned rows/columns."""
+    # Heuristic: rows within y_tolerance, columns aligned within x_tolerance.
     if not cfg.detect_tables:
         return pages
     result: List[Dict[str, Any]] = []
@@ -692,6 +695,7 @@ def save_json(pages: List[Dict[str, Any]], path: Path, encoding: str) -> None:
     for page in pages:
         hier = build_bullet_hierarchy(page.get("blocks", []))
         enriched.append({**page, "blocks_hier": hier})
+    # Build high-level sections from detected headers for downstream use.
     doc_sections = build_document_structure(enriched)
     payload = {"pages": enriched, "document": {"sections": doc_sections}}
     path.parent.mkdir(parents=True, exist_ok=True)

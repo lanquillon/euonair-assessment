@@ -1,12 +1,24 @@
+"""Unit tests for question_generation helpers."""
+# pylint: disable=import-error, wrong-import-position
+
+import sys
 import json
 import unittest
+from pathlib import Path
 
-from question_generation import extract_json_from_text, normalize_questions, format_questions
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from question_generation import (  # noqa: E402
+    extract_json_from_text,
+    normalize_questions,
+    format_questions,
+)
 
 
 class TestQuestionGeneration(unittest.TestCase):
-    # JSON parsing should accept clean JSON
+    """Tests for JSON parsing, normalization, and formatting."""
+
     def test_extract_json_simple(self):
+        """JSON parsing should accept clean JSON."""
         payload = {
             "questions": [
                 {
@@ -22,23 +34,39 @@ class TestQuestionGeneration(unittest.TestCase):
         self.assertIn("questions", parsed)
         self.assertEqual(parsed["questions"][0]["question"], "What is AI?")
 
-    # JSON parsing should tolerate code fences
     def test_extract_json_code_fence(self):
-        payload = {"questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_answer_index": 2}]}
+        """JSON parsing should tolerate code fences."""
+        payload = {
+            "questions": [
+                {
+                    "question": "Q1",
+                    "options": ["A", "B", "C", "D"],
+                    "correct_answer_index": 2,
+                }
+            ]
+        }
         fenced = "```json\n" + json.dumps(payload) + "\n```"
         parsed = extract_json_from_text(fenced)
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed["questions"][0]["correct_answer_index"], 2)
 
-    # Normalization should map correct_index to correct_answer_index
     def test_normalize_correct_index(self):
-        parsed = {"questions": [{"question": "Q1", "options": ["A", "B", "C", "D"], "correct_index": 2}]}
+        """Normalization should map correct_index to correct_answer_index."""
+        parsed = {
+            "questions": [
+                {
+                    "question": "Q1",
+                    "options": ["A", "B", "C", "D"],
+                    "correct_index": 2,
+                }
+            ]
+        }
         normalized = normalize_questions(parsed)
         self.assertTrue(normalized)
         self.assertEqual(normalized[0]["correct_answer_index"], 2)
 
-    # Formatting should add letter prefixes and correct letter
     def test_format_questions_letters(self):
+        """Formatting should add letter prefixes and correct letter."""
         questions = [
             {
                 "question": "Q1",

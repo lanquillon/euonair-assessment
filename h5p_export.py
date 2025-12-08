@@ -82,6 +82,7 @@ def validate_question(question: dict, question_num: int) -> list[str]:
 
 def validate_all_questions(questions: list[dict]) -> tuple[bool, list[str]]:
     """Validate all questions. Returns (is_valid, error_list)."""
+    # Run per-question checks; collect all errors for a single report.
     all_errors: list[str] = []
 
     if not questions:
@@ -96,6 +97,7 @@ def validate_all_questions(questions: list[dict]) -> tuple[bool, list[str]]:
 
 def slugify(text: str, max_length: int = 40) -> str:
     """Convert text to a safe filename slug."""
+    # Keep filenames predictable: lowercase, hyphenated, max length trimmed.
     lowered = text.lower()
     cleaned = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
     return (cleaned or "question")[:max_length]
@@ -123,6 +125,7 @@ def load_questions(path: str) -> list[dict]:
 
 def build_multichoice_content(question_data: dict) -> dict:
     """Build H5P.MultiChoice content.json structure from question data."""
+    # Defensive parsing: keep empty strings instead of None.
     question_text = question_data.get("question", "").strip()
     options = question_data.get("options", [])
     correct_index = question_data.get("correct_answer_index", 0)
@@ -206,6 +209,7 @@ def write_h5p_package(
     output_path: Path, h5p_meta: dict, content_data: dict
 ) -> None:
     """Create .h5p ZIP package with required structure."""
+    # Minimal package: metadata + content; libraries assumed preinstalled in LMS.
     output_path.parent.mkdir(parents=True, exist_ok=True)
     h5p_json_str = json.dumps(h5p_meta, ensure_ascii=False, indent=2)
     content_json_str = json.dumps(content_data, ensure_ascii=False, indent=2)
@@ -260,6 +264,7 @@ def export_all_questions_to_h5p(
     print(f"Found {len(questions)} questions")
 
     if validate:
+        # Fail fast on bad input so we don't write broken packages.
         print("\nValidating questions for H5P compatibility...")
         is_valid, errors = validate_all_questions(questions)
         if not is_valid:

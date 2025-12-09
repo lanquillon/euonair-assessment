@@ -1,180 +1,88 @@
-# EUonAIR Assessment
+# PDF-to-H5P Multiple-Choice-Questions Pipeline
 
-# Programmieraufgabe: KI-gestützte Erstellung von Multiple-Choice-Questions
+Guide for extracting text from PDFs, generating questions, and exporting to H5P.
 
-Herzlich willkommen zu dieser Programmieraufgabe!
+## Prerequisites
+- Windows 10/11 tested; macOS/Linux should work with adapted venv activation.
+- Python 3.10+ and Git installed.
+- Ollama installed; pull a model and run the server: `ollama pull llama2`, then `ollama serve`.
+- Optional OCR: Tesseract installed and reachable via PATH or `TESSERACT_CMD` (e.g., `$env:TESSERACT_CMD="C:\\Users\\<user>\\AppData\\Local\\Tesseract-OCR\\tesseract.exe"`).
+- Optional tables: `pdfplumber` (already in requirements).
+- Outputs are written under `all_output/` (extracted text, generated questions, H5P files).
 
-Ziel ist es, Ihre Fähigkeiten in Python sowie im effektiven Einsatz von KI-Technologien zu demonstrieren. Im Fokus steht dabei die automatisierte Erstellung von Multiple-Choice-Fragen aus Vorlesungsfolien, inklusive der strukturierten Textextraktion aus PDF-Dokumenten und dem Export im H5P-Format zur Weiterverwendung in Lernmanagementsystemen.
+## Installation
+```powershell
+git clone <REPO_URL>
+cd <PROJECT_DIR>
 
-## 1. Aufgabenbeschreibung
+python -m venv .venv
+./.venv/Scripts/Activate.ps1
 
-### 1.1 PDF-Verarbeitung und Textextraktion
+pip install -r requirements.txt
+```
 
-#### Eingabeformat
+## PDF extraction (CLI)
+- Basic: `python pdf_text_extractor.py sample.pdf`
+- With tables + logs: `python pdf_text_extractor.py sample.pdf --detect-tables --verbose`
+- Common flags:
+  - `--pages 1-3,5` limit pages
+  - `--password YOURPASS` for encrypted PDFs
+  - `--ocr / --no-ocr` toggle OCR fallback (on by default)
+  - `--force-ocr` force OCR on all pages
+  - `--output-json out.json`, `--output-md out.md`, `--no-json`, `--no-md`
 
-- Verarbeiten Sie PDF-Dokumente, die typische Vorlesungsfolien oder Skripte enthalten.
-- Unterstützte PDF-Typen:
-    - Textbasierte PDFs mit direkt extrahierbarem Text (Pflicht)
-    - (Optional) Bildbasierte PDFs mittels OCR bzw. multimodalen LLMs
+Outputs default to `all_output/extracted_text_output/` (`extracted_text.json`, `extracted_text.md` with per-page view).
 
-- **Wichtig:**
-    - Behandeln Sie verschiedene Folienlayouts robust (Titel, Bullet Points, Tabellen).
-    - Erkennen Sie nach Möglichkeit die logische Struktur (Kapitel, Abschnitte, Foliennummern).
+## Question generation
+- Requires Ollama running: `ollama serve`
+- Default run: `python question_generation.py` -> `all_output/generated_questions_output/questions.json`
+- Custom paths: `python question_generation.py --input-json all_output/extracted_text_output/no_ocr.json --output-json all_output/generated_questions_output/questions_no_ocr.json`
+- Topic hint (steer focus): `python question_generation.py --topic-hint "interaction design"`
+- Auto-version outputs: `python question_generation.py --auto-version`
+- Adjust `OLLAMA_MODEL` / `OLLAMA_BASE_URL` in `question_generation.py` if needed.
 
-#### Textextraktion
-- Extrahieren Sie den Textinhalt folienweise oder abschnittsweise.
-- Bewahren Sie nach Möglichkeit die hierarchische Struktur (Überschriften, Unterpunkte).
-- Filtern Sie irrelevante Inhalte (z. B. Seitenzahlen, wiederkehrende Header/Footer).
+## H5P export
+- Run: `python h5p_export.py` -> `.h5p` files in `all_output/h5p_output/`
+- Uses `all_output/generated_questions_output/questions.json` by default; validates basics before writing packages.
+- Export all versioned questions (`questions_v*.json`) to subfolders: `python h5p_export.py --all-versions`
 
-#### Fehlerbehandlung
-- Fangen Sie beschädigte oder passwortgeschützte PDFs kontrolliert ab.
-- Loggen Sie Extraktionsprobleme nachvollziehbar.
+For additional command variants (OCR/no-OCR, tables, page subsets, custom paths), see `commands.md`.
 
+## Tests
+- Pytest: `pytest`
+- Unittest: `python -m unittest discover -s tests -p "test_*.py"`
 
-### 1.2 KI-gestützte Fragegenerierung
+## Verification
+- Review `extracted_text.md` for extraction quality before generating questions.
+- Edit questions JSON if you want to refine wording or options.
+- Import generated `.h5p` files into your LMS/Lumi with the `H5P.MultiChoice` library available.
 
-#### Ziel
-- Generieren Sie aus dem extrahierten Folieninhalt didaktisch sinnvolle Multiple-Choice-Fragen, bestehend aus:
-    - Fragentext (Question Stem)
-    - Einer korrekten Antwort
-    - Mindestens zwei bis drei plausiblen Distraktoren (falsche Antworten)
-    - (Optional) Erklärung/Feedback zur korrekten Antwort
-
-#### Qualitätshinweise
-- Distraktoren sollen plausibel, aber eindeutig falsch sein.
-- Die korrekte Antwort soll sich klar aus dem Folieninhalt ableiten lassen.
-- (Empfehlung) Berücksichtigen Sie nach Möglichkeit verschiedene Schwierigkeitsgrade (Bloom-Level).
-
-#### Erlaubte KI-Methoden
-- Open-Source-Modelle (z. B. Hugging Face Transformers, Ollama, LLaMA)
-- Kommerzielle APIs (z. B. OpenAI, Anthropic), unter der Bedingung, dass Sie keine API-Keys fest im Code hinterlegen (Umgang via Umgebungsvariablen oder separater Konfigurationsdatei).
-- Hybride Ansätze (Kombination aus regelbasierten Methoden und LLMs)
-
-
-### 1.3 H5P-Export
-
-#### Zielformat
-- Exportieren Sie die generierten Fragen im H5P-Format, sodass sie in gängigen Lernmanagementsystemen (Moodle, ILIAS, etc.) importiert werden können.
-- Unterstützen Sie den H5P-Inhaltstyp **"Multiple Choice"**.
-
-#### Technische Umsetzung
-- H5P-Pakete sind ZIP-Archive mit definierter Struktur (content.json, h5p.json).
-- Generieren Sie valide H5P-Pakete, die ohne Nachbearbeitung importierbar sind.
-
-#### Validierung
-- Testen Sie die generierten H5P-Dateien auf Importierbarkeit und korrekte Darstellung, z. B. mit:
-    - [Lumi](https://lumi.education/) (kostenloser Desktop-Editor und -Player)
-    - [h5p.org](https://h5p.org/) (Online-Test)
+## Troubleshooting
+- Ollama connection errors: confirm `ollama serve` is running and the model name matches.
+- Tesseract not found: install Tesseract and set `TESSERACT_CMD` to the executable path.
+- Missing outputs: check file paths/flags and rerun the step.
 
 
-### 1.4 Ergebnisaufbereitung
+--------------------------------------------------------------------
 
-**Strukturiertes Ergebnis (Haupt-Deliverable)**
-- Erstellen Sie eine Pipeline, die aus PDF-Eingaben H5P-Dateien mit Multiple-Choice-Fragen generiert.
-- Mögliche Zwischenformate:
-    - Export (Text, Markdown oder JSON) der extrahierten und aufbereiteten Inhalte
-    - JSON-Struktur mit extrahiertem Text und generierten Fragen
+## Documentation
+##### Kurze Beschreibung der verwendeten KI-Methode/Prompting-Strategie
 
-**Empfehlung**
-- Trennen Sie klar zwischen Extraktion, Generierung und Export.
-- Ermöglichen Sie eine manuelle Überprüfung der Fragen vor dem finalen H5P-Export.
+Das KI-Setup umfasst drei Stufen: (1) Extraktion/Strukturierung der PDF-Inhalte (Header/Footer/Page-Filter, optionale OCR, Tabellenerkennung) in JSON/Markdown. (2) Generierung von Multiple-Choice-Fragen über ein lokales LLM (Ollama, Modell: llama2) auf Basis der strukturierten JSON-Blöcke. (3) Export im H5P-Format für LMS-Integration.
 
+Der zentrale Prompt in question_generation.py erzwingt klare Frage-/Antwortformate (Bloom-Level, Quelle, Index + Buchstabe + Erklärung). Neben dem Prompt-Katalog (https://coda.io/@kic/prompt-katalog) flossen eigene Prompting-Erfahrungen, Online-Beispiele (https://studylib.net/doc/25824333/hmi-qb-answers) und wissenschaftliche Literatur (bspw. "*Automated Educational Question Generation at Different Bloom's Skill Levels using Large Language Models: Strategies and Evaluation*" https://arxiv.org/abs/2408.04394) ein; ChatGPT & Claude halfen beim Feinschliff. Deep-Research diente für Best Practices/Cheat-Sheets zu Prompt-Design und LLM-Evaluierung (v. a. Open-Source-Modelle) inkl. Literaturrecherche. Da ich Programmieranfängerin bin, kamen mehrere LLMs & Code Assistants (bspw. Github Copilot free) sowie Selbst- bzw. Literaturrecherche (bspw. "*Evaluating Large Language Models Trained on Code*" https://arxiv.org/abs/2107.03374) zum Einsatz, um KI-gestützt sauberen, optimierten Code zu erstellen
 
-## 2. Technische Anforderungen
+##### Wie könnte das System erweitert werden (z. B. weitere Fragetypen, OCR-Unterstützung, Feedback-Generierung)?
 
-- **Programmiersprache:**
-    - Python 3.10 oder höher
-
-- **Python-Bibliotheken:**
-    - PDF-Verarbeitung: frei wählbar (z. B. PyMuPDF, pdfplumber)
-    - KI-Integration: frei wählbar (z. B. openai, anthropic, transformers, langchain)
-    - H5P-Generierung: eigene Implementierung oder verfügbare Hilfsbibliotheken
-
-- **Modularer Code:**
-    - Trennen Sie die Hauptfunktionen klar (Extraktion, Generierung, Export)
-    - Verwenden Sie Type Hints und sinnvolle Kommentare
-
-- **Logging & Fehlerbehandlung:**
-    - Loggen Sie wichtige Prozessschritte
-    - Behandeln Sie API-Fehler und Timeouts
-
-- **Requirements/Dependency Management:**
-    - Stellen Sie eine `requirements.txt` bereit
-
-- **Versionskontrolle:**
-    - Nutzen Sie Git und entwickeln Sie in einem eigenen Branch
-    - Committen Sie keine sensiblen Daten wie API-Keys ins Repository
-
-
-## 3. Vorgehensweise & Abgabe
-
-1. Forken Sie dieses (oder ein bereitgestelltes) GitHub-Repository.
-2. Erstellen Sie einen eigenen Branch, in dem Sie Ihre Lösung implementieren.
-3. Implementieren Sie folgende Schritte:
-    - PDF-Extraktion (Text und Struktur)
-    - KI-gestützte Fragegenerierung
-    - H5P-Export
-4. **Ergebnisformat:**
-    - Lauffähiges Python-Skript oder CLI-Tool
-    - Beispiel-H5P-Dateien (generiert aus Testdaten)
-    - Zwischenergebnisse als JSON/CSV
-5. **Dokumentation:**
-    - `README.md` mit Installationsanleitung und Beispielaufruf
-    - Kurze Beschreibung der verwendeten KI-Methode/Prompting-Strategie (kann in README integriert sein)
-6. **Funktionsnachweis:**
-    - Demonstrieren Sie die Funktionsfähigkeit anhand eines Beispieldurchlaufs
-    - (Optional) Ergänzen Sie Unit-Tests für kritische Funktionen
-7. **Abgabe:**
-    - Committen Sie Ihre fertige Lösung in Ihrem Branch
-    - (Optional) Stellen Sie einen Pull Request für eine direkte Code-Review
-
-
-## 4. Beispielfragen zur Orientierung
-
-- Wie gehen Sie mit unterschiedlichen PDF-Strukturen um (verschiedene Layouts, fehlende Struktur)?
-- Welche Prompting-Strategien nutzen Sie, um qualitativ hochwertige Fragen zu generieren?
-- Wie stellen Sie sicher, dass Distraktoren plausibel, aber eindeutig falsch sind?
-- Wie stellen Sie sicher, dass ggf. vorgegebene bzw. verlange Schwierigkeitsgrade (Bloom-Level) erreicht werden?
-- Wie validieren Sie die generierten H5P-Dateien auf Kompatibilität?
-- Wie könnte das System erweitert werden (z. B. weitere Fragetypen, OCR-Unterstützung, Feedback-Generierung)?
-
-
-## 5. Bewertungskriterien
-
-- **Funktionalität (40%)**
-    - Erfüllung der Kernanforderungen (Extraktion, Generierung, Export)
-    - Robustheit (Umgang mit verschiedenen PDF-Formaten, API-Fehlern)
-    - Qualität der generierten Fragen
-
-- **Code-Qualität (30%)**
-    - Struktur und Lesbarkeit (Funktionen, Kommentare, Type Hints)
-    - Fehlerbehandlung und Logging
-
-- **Dokumentation (20%)**
-    - Vollständigkeit (README, Installationsanleitung, Beispielaufruf)
-    - Nachvollziehbarkeit der KI-Methodik
-
-- **Innovation (10%)**
-    - Kreative Ansätze oder zusätzliche Features
-    - Effizienz der Implementierung
-
-
-## 6. Einschränkungen und Hinweise
-
-- Verwenden Sie für Tests nur eigene oder frei lizenzierte PDF-Dokumente.
-- API-Keys (falls nötig) nicht im Code committen – nutzen Sie Umgebungsvariablen oder lokale Konfigurationsdateien.
-- Dokumentieren Sie ggf. Kosten für kommerzielle APIs, falls Sie diese einsetzen.
-- Eine Test-Ausführung mit einem kleinen Foliensatz (z. B. 5–10 Folien, 3–5 generierte Fragen) reicht aus, um den Ablauf zu demonstrieren.
-
-
-## 7. Abgabetermin und Kontakt
-
-- **Abgabefrist:** Dienstag, 9. Dezember, 20:00 Uhr (MEZ)
-- **Einreichung:** GitHub-Pull-Request und GitHub-/Download-Link (zur Sicherheit)
-- **Kontakt für Rückfragen:** carsten.lanquillon@hs-heilbronn.de
-
----
-
-Viel Erfolg bei der Bearbeitung!
-
-Wir freuen uns auf Ihre kreative und saubere Umsetzung der Aufgabe. Bei Fragen oder Problemen stehen wir Ihnen innerhalb des vorgegebenen Rahmens gerne zur Verfügung.
+- durch bspw. Visual Analytics: wie oft werden bestimmte Fragetypen generiert? Woran könnte das liegen?, grafische Darstellung; Bild- bzw. Graph-Generierung zur Veranschaulichung des Inhalts
+- Erklärung/Kurzbeschreibung/exakte Quellen-/Literaturangabe bzw. Zitat (wenn mitgegeben/darauf trainiert), warum welche Antwort korrekt ist
+- Gamification-Elemente: Punktesystem zur Bewertung der Antworten (Feedback an Kandidaten, wie gut hat dieser abgeschnitten?) sowie der 
+- Framework/Guidelines für PDF-Gestaltung / Templates / Einbau spezifischer Indikatoren für bspw. Wunsch-Schwierigkeitsgrad (direkt im pdf) oder code-intern
+- Spracherkennung mithilfe installierter Sprachpakte oder ähnlich
+- Fragen-Katalog nach Themen sortiert ausgeben lassen, dass der Dozent auswählen kann, welche er verwenden möchte/ in welche Richtung mehr generiert werden soll
+- Konvertierung von pdf in html oder ähnlich für bessere Layout-Erkennung(?)
+- ggf. Code-Evaluierung https://huggingface.co/collections/Vipitis/code-evaluation
+- Output-Iterationen
+- Abbildungen oder Platzhalter für diese hinzufügen; dazu Kurzbeschreibungen oder Nummerierung
+- GUI
+- Qualitätschecks (bspw. durch Reinforcement-Learning Methoden oder ähnlich); Orientierung an *Learning diverse rankings with multi-armed bandits* (https://dl.acm.org/doi/10.1145/1390156.1390255) oder *BanditRank: Learning to Rank Using Contextual Bandits* (https://arxiv.org/abs/1910.10410)

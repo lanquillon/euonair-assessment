@@ -1,0 +1,79 @@
+{
+  "llm_provider": "ollama",
+  "model": "llama2",
+  "question_type": "multiple_choice",
+  "total_blocks_used": 8,
+  "topic_hint": "generative ai",
+  "questions": [
+    {
+      "question_number": 1,
+      "question": "Which of the following is an example of a generative AI system?",
+      "options": [
+        "A) A chatbot trained to respond to user queries.",
+        "B) An image generator that produces new landscapes based on user input.",
+        "C) A language translator that learns from user feedback.",
+        "D) A recommendation engine that suggests products based on user history."
+      ],
+      "correct_answer_index": 2,
+      "correct_answer_letter": "C",
+      "bloom_level": "remember",
+      "explanation": "Option B is an example of a generative AI system because it produces new content (landscapes) based on user input."
+    },
+    {
+      "question_number": 2,
+      "question": "What is the primary goal of feedback-based design for generative AI systems?",
+      "options": [
+        "A) To make the system more efficient.",
+        "B) To improve the accuracy of generated content.",
+        "C) To enhance the user experience through personalization.",
+        "D) To increase the system's ability to generate novel content."
+      ],
+      "correct_answer_index": 3,
+      "correct_answer_letter": "D",
+      "bloom_level": "understand",
+      "explanation": "The primary goal of feedback-based design is to increase the system’s ability to generate novel content, which is option C."
+    },
+    {
+      "question_number": 3,
+      "question": "What is the difference between a generative AI system and a non-generative AI system?",
+      "options": [
+        "A) A generative AI system generates new content, while a non-generative AI system does not.",
+        "B) A generative AI system learns from user feedback, while a non-generative AI system does not.",
+        "C) A generative AI system is trained on a specific task, while a non-generative AI system is not.",
+        "D) A generative AI system is more accurate than a non-generative AI system."
+      ],
+      "correct_answer_index": 1,
+      "correct_answer_letter": "B",
+      "bloom_level": "remember",
+      "explanation": "Option A is the difference between a generative and non-generative AI system: generative systems generate new content, while non-generative systems do not."
+    },
+    {
+      "question_number": 4,
+      "question": "What is the benefit of using an interactive feedback loop in a generative AI system?",
+      "options": [
+        "A) To reduce the risk of overfitting the training data.",
+        "B) To improve the accuracy of generated content.",
+        "C) To enhance the user experience through personalization.",
+        "D) To increase the system’s ability to generate novel content."
+      ],
+      "correct_answer_index": 2,
+      "correct_answer_letter": "C",
+      "bloom_level": "understand",
+      "explanation": "The benefit of using an interactive feedback loop in a generative AI system is to improve the accuracy of generated content, which is option B."
+    },
+    {
+      "question_number": 5,
+      "question": "What is the difference between a generative AI system and a traditional rule-based system?",
+      "options": [
+        "A) A generative AI system learns from user feedback, while a traditional rule-based system does not.",
+        "B) A generative AI system generates new content based on user input, while a traditional rule-based system uses predefined rules.",
+        "C) A generative AI system is more flexible than a traditional rule-based system.",
+        "D) A generative AI system is less accurate than a traditional rule-based system."
+      ],
+      "correct_answer_index": 3,
+      "correct_answer_letter": "D",
+      "bloom_level": "apply",
+      "explanation": "Option C is the difference between a generative AI system and a traditional rule-based system: generative systems are more flexible in generating new content based on user input."
+    }
+  ]
+}

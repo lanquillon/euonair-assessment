@@ -1,0 +1,404 @@
+# flake8: noqa: E501
+"""Export multiple-choice questions to H5P.MultiChoice packages."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Optional
+from zipfile import BadZipFile, ZipFile, ZIP_DEFLATED
+
+QUESTIONS_JSON = Path("all_output") / "generated_questions_output" / "questions.json"
+OUTPUT_DIR = Path("all_output") / "h5p_output"
+
+H5P_MC_MAJOR = 1
+H5P_MC_MINOR = 16
+H5P_LANGUAGE = "en"
+H5P_RANDOMIZE_ANSWERS = False
+
+
+class ValidationError(Exception):
+    """Raised when H5P content validation fails."""
+
+
+def validate_question(question: dict, question_num: int) -> list[str]:
+    """Validate a single question for H5P compatibility."""
+    errors: list[str] = []
+
+    if not question.get("question", "").strip():
+        errors.append(f"Q{question_num}: Missing question text")
+
+    options = question.get("options", [])
+    if not options:
+        errors.append(f"Q{question_num}: No answer options provided")
+    elif len(options) < 2:
+        errors.append(
+            f"Q{question_num}: At least 2 options required "
+            f"(found {len(options)})"
+        )
+    elif len(options) > 10:
+        errors.append(
+            f"Q{question_num}: Too many options ({len(options)}, "
+            "max 10 recommended)"
+        )
+
+    correct_idx = question.get("correct_answer_index")
+    if correct_idx is None:
+        errors.append(f"Q{question_num}: Missing correct_answer_index")
+    elif not isinstance(correct_idx, int):
+        errors.append(
+            f"Q{question_num}: correct_answer_index must be integer "
+            f"(got {type(correct_idx).__name__})"
+        )
+    elif correct_idx < 0 or correct_idx >= len(options):
+        errors.append(
+            f"Q{question_num}: correct_answer_index {correct_idx} "
+            f"out of range (0-{len(options) - 1})"
+        )
+
+    for i, opt in enumerate(options):
+        if not str(opt).strip():
+            errors.append(f"Q{question_num}: Option {i} is empty")
+
+    question_text = question.get("question", "")
+    if len(question_text) > 5000:
+        errors.append(
+            f"Q{question_num}: Question text very long "
+            f"({len(question_text)} chars, may cause display issues)"
+        )
+
+    option_texts = [
+        str(opt).strip().lower()
+        for opt in options
+        if str(opt).strip()
+    ]
+    if len(option_texts) != len(set(option_texts)):
+        errors.append(f"Q{question_num}: Duplicate answer options detected")
+
+    return errors
+
+
+def validate_all_questions(questions: list[dict]) -> tuple[bool, list[str]]:
+    """Validate all questions. Returns (is_valid, error_list)."""
+    # Run per-question checks; collect all errors for a single report.
+    all_errors: list[str] = []
+
+    if not questions:
+        all_errors.append("No questions found in input")
+        return False, all_errors
+
+    for i, question in enumerate(questions, start=1):
+        all_errors.extend(validate_question(question, i))
+
+    return len(all_errors) == 0, all_errors
+
+
+def slugify(text: str, max_length: int = 40) -> str:
+    """Convert text to a safe filename slug."""
+    # Keep filenames predictable: lowercase, hyphenated, max length trimmed.
+    lowered = text.lower()
+    cleaned = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+    return (cleaned or "question")[:max_length]
+
+
+def load_questions(path: str) -> list[dict]:
+    """Load questions from JSON produced by question_generation.py."""
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(
+            f"{path} not found. Run question_generation.py first."
+        )
+
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in {path}: {exc}") from exc
+
+    questions = data.get("questions", [])
+    if not isinstance(questions, list):
+        raise ValueError(f"{path} does not contain a 'questions' list")
+
+    return questions
+
+
+def build_multichoice_content(question_data: dict) -> dict:
+    """Build H5P.MultiChoice content.json structure from question data."""
+    # Defensive parsing: keep empty strings instead of None.
+    question_text = question_data.get("question", "").strip()
+    options = question_data.get("options", [])
+    correct_index = question_data.get("correct_answer_index", 0)
+    explanation = question_data.get("explanation", "").strip()
+
+    if not question_text or not options:
+        raise ValueError("Question or options missing in question_data")
+
+    if (
+        not isinstance(correct_index, int)
+        or not 0 <= correct_index < len(options)
+    ):
+        correct_index = 0
+
+    answers = []
+    for idx, opt_text in enumerate(options):
+        option_text = str(opt_text).strip()
+        if option_text:
+            answers.append(
+                {"text": option_text, "correct": idx == correct_index}
+            )
+
+    if not answers:
+        raise ValueError("No valid answer options found")
+
+    behaviour = {
+        "enableRetry": True,
+        "enableSolutionsButton": True,
+        "autoCheck": False,
+        "randomAnswers": H5P_RANDOMIZE_ANSWERS,
+        "singlePoint": False,
+        "showSolutionsRequiresInput": True,
+        "passPercentage": 100,
+    }
+
+    ui = {
+        "checkAnswer": "Check",
+        "showSolutionButton": "Show solution",
+        "tryAgain": "Retry",
+        "correctText": "Correct!",
+        "incorrectText": "Incorrect.",
+        "showSolution": "Show solution",
+        "yourResult": "Your result:",
+    }
+
+    overall_feedback = [
+        {
+            "from": 0,
+            "to": 100,
+            "feedback": explanation or "You scored @score out of @maxScore.",
+        }
+    ]
+
+    return {
+        "question": question_text,
+        "answers": answers,
+        "behaviour": behaviour,
+        "UI": ui,
+        "overallFeedback": overall_feedback,
+    }
+
+
+def build_h5p_metadata(title: str) -> dict:
+    """Build h5p.json metadata (H5P specification requirements)."""
+    return {
+        "title": title,
+        "language": H5P_LANGUAGE,
+        "mainLibrary": "H5P.MultiChoice",
+        "embedTypes": ["div"],
+        "preloadedDependencies": [
+            {
+                "machineName": "H5P.MultiChoice",
+                "majorVersion": H5P_MC_MAJOR,
+                "minorVersion": H5P_MC_MINOR,
+            }
+        ],
+    }
+
+
+def write_h5p_package(
+    output_path: Path, h5p_meta: dict, content_data: dict
+) -> None:
+    """Create .h5p ZIP package with required structure."""
+    # Minimal package: metadata + content; libraries assumed preinstalled in LMS.
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    h5p_json_str = json.dumps(h5p_meta, ensure_ascii=False, indent=2)
+    content_json_str = json.dumps(content_data, ensure_ascii=False, indent=2)
+    with ZipFile(output_path, "w", ZIP_DEFLATED) as zf:
+        zf.writestr("h5p.json", h5p_json_str)
+        zf.writestr("content/content.json", content_json_str)
+
+
+# pylint: disable=too-many-return-statements
+def validate_h5p_package(h5p_path: Path) -> tuple[bool, Optional[str]]:
+    """Basic validation of created H5P package."""
+    try:
+        with ZipFile(h5p_path, "r") as zf:
+            files = zf.namelist()
+            if "h5p.json" not in files:
+                return False, "Missing h5p.json"
+            if "content/content.json" not in files:
+                return False, "Missing content/content.json"
+            try:
+                h5p_data = json.loads(zf.read("h5p.json"))
+                if "mainLibrary" not in h5p_data:
+                    return False, "h5p.json missing mainLibrary"
+            except json.JSONDecodeError as exc:
+                return False, f"Invalid h5p.json: {exc}"
+            try:
+                content_data = json.loads(zf.read("content/content.json"))
+                if "question" not in content_data:
+                    return False, "content.json missing question field"
+                if "answers" not in content_data:
+                    return False, "content.json missing answers field"
+            except json.JSONDecodeError as exc:
+                return False, f"Invalid content.json: {exc}"
+        return True, None
+    except (BadZipFile, OSError) as exc:
+        return False, f"Package validation error: {exc}"
+
+
+# pylint: disable=too-many-locals,too-many-return-statements
+def export_all_questions_to_h5p(
+    questions_file: str = str(QUESTIONS_JSON),
+    output_dir: Path = OUTPUT_DIR,
+    validate: bool = True,
+) -> tuple[int, int]:
+    """Load questions and create individual .h5p files."""
+    print(f"Loading questions from {questions_file}...")
+    questions = load_questions(questions_file)
+
+    if not questions:
+        print("[WARN] No questions found in questions.json")
+        return 0, 0
+
+    print(f"Found {len(questions)} questions")
+
+    if validate:
+        # Fail fast on bad input so we don't write broken packages.
+        print("\nValidating questions for H5P compatibility...")
+        is_valid, errors = validate_all_questions(questions)
+        if not is_valid:
+            print(
+                f"\n[ERROR] Validation failed with {len(errors)} error(s):\n"
+            )
+            for error in errors[:10]:
+                print(f"  - {error}")
+            if len(errors) > 10:
+                print(f"  ... and {len(errors) - 10} more errors")
+            print("\nFix these errors before exporting to H5P.")
+            return 0, len(questions)
+        print("All questions validated successfully")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\nExporting to {output_dir}...\n")
+
+    success_count = 0
+    error_count = 0
+
+    for idx, question in enumerate(questions, start=1):
+        try:
+            question_text = question.get("question", "").strip()
+            short_slug = slugify(question_text)
+            title = f"MCQ {idx}: {question_text[:60]}"
+
+            h5p_meta = build_h5p_metadata(title)
+            content_data = build_multichoice_content(question)
+
+            filename = f"mcq_{idx:03d}_{short_slug}.h5p"
+            output_path = output_dir / filename
+            write_h5p_package(output_path, h5p_meta, content_data)
+
+            if validate:
+                is_valid, error = validate_h5p_package(output_path)
+                if not is_valid:
+                    print(
+                        f"[WARN] {filename} - "
+                        f"Package validation warning: {error}"
+                    )
+                    error_count += 1
+                    continue
+
+            print(f"[OK] {filename}")
+            success_count += 1
+
+        except (ValueError, OSError, BadZipFile) as exc:
+            print(f"[ERROR] Failed to create question {idx}: {exc}")
+            error_count += 1
+
+    return success_count, error_count
+
+
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """CLI args for selecting questions file(s)."""
+    parser = argparse.ArgumentParser(
+        description="Export MCQ questions to H5P packages."
+    )
+    parser.add_argument(
+        "--questions-file",
+        default=str(QUESTIONS_JSON),
+        help=f"Path to questions JSON (default: {QUESTIONS_JSON})",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=str(OUTPUT_DIR),
+        help=f"Output directory for H5P files (default: {OUTPUT_DIR})",
+    )
+    parser.add_argument(
+        "--all-versions",
+        action="store_true",
+        help="Export all questions_v*.json in the questions-file directory "
+        "to separate subfolders under output-dir.",
+    )
+    return parser.parse_args(argv)
+
+
+def main() -> int:
+    """CLI entry point with summary."""
+    print("=" * 70)
+    print("H5P Multiple-Choice Question Exporter")
+    print("=" * 70)
+    print()
+
+    args = parse_args()
+
+    try:
+        total_success = 0
+        total_errors = 0
+
+        questions_path = Path(args.questions_file)
+        output_root = Path(args.output_dir)
+
+        files_to_process: list[Path]
+        if args.all_versions:
+            pattern = f"{questions_path.stem}_v*.json"
+            files_to_process = sorted(questions_path.parent.glob(pattern))
+            if not files_to_process:
+                print(f"[WARN] No files matching {pattern}; using {questions_path}")
+                files_to_process = [questions_path]
+        else:
+            files_to_process = [questions_path]
+
+        for qfile in files_to_process:
+            target_dir = output_root / qfile.stem if args.all_versions else output_root
+            success, errors = export_all_questions_to_h5p(
+                questions_file=str(qfile),
+                output_dir=target_dir,
+                validate=True,
+            )
+            total_success += success
+            total_errors += errors
+
+        print("\n" + "=" * 70)
+        if total_errors == 0:
+            print(f"Success! {total_success} H5P file(s) created under: {output_root}")
+        else:
+            print("Completed with issues:")
+            print(f"   {total_success} succeeded, {total_errors} failed")
+        print("=" * 70)
+
+        return 0 if total_errors == 0 else 1
+
+    except FileNotFoundError as exc:
+        print(f"\n[ERROR] {exc}")
+        return 1
+    except ValueError as exc:
+        print(f"\n[ERROR] {exc}")
+        return 1
+    except (OSError, BadZipFile) as exc:
+        print(f"\n[ERROR] Unexpected error: {exc}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

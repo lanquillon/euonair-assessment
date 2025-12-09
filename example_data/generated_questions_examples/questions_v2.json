@@ -1,0 +1,78 @@
+{
+  "llm_provider": "ollama",
+  "model": "llama2",
+  "question_type": "multiple_choice",
+  "total_blocks_used": 8,
+  "questions": [
+    {
+      "question_number": 1,
+      "question": "When designing a user interface, what is the primary goal of the designer according to Nielsen's heuristics?",
+      "options": [
+        "A) To create a visually appealing design",
+        "B) To ensure high usability and accessibility",
+        "C) To incorporate the latest design trends",
+        "D) To meet the client's branding guidelines"
+      ],
+      "correct_answer_index": 2,
+      "correct_answer_letter": "C",
+      "bloom_level": "apply",
+      "explanation": "Nielsen's heuristics prioritize usability and accessibility over other design considerations like aesthetics or trends. Meeting users' needs (heuristic #2) is the primary goal of the designer."
+    },
+    {
+      "question_number": 2,
+      "question": "Which module in UI design focuses on organizing elements to improve user interaction?",
+      "options": [
+        "A) Modular design",
+        "B) Information architecture",
+        "C) Visual design",
+        "D) Interaction design"
+      ],
+      "correct_answer_index": 0,
+      "correct_answer_letter": "A",
+      "bloom_level": "remember",
+      "explanation": "Information architecture (IA) is the module in UI design that deals with organizing elements to improve user interaction. It involves structuring content and navigational systems for optimal usability."
+    },
+    {
+      "question_number": 3,
+      "question": "What is the primary benefit of using a modular design approach in UI development?",
+      "options": [
+        "A) Faster development time",
+        "B) Improved user experience",
+        "C) Increased design flexibility",
+        "D) Better scalability"
+      ],
+      "correct_answer_index": 1,
+      "correct_answer_letter": "B",
+      "bloom_level": "understand",
+      "explanation": "Modular design allows for easier maintenance and updates over time. Each module can be developed, tested, and updated independently, reducing the overall development time."
+    },
+    {
+      "question_number": 4,
+      "question": "What is the primary goal of a user interface in a given context?",
+      "options": [
+        "A) To provide information to the user",
+        "B) To enable user interaction with the system",
+        "C) To create an aesthetically pleasing design",
+        "D) To meet the designer's personal style"
+      ],
+      "correct_answer_index": 3,
+      "correct_answer_letter": "D",
+      "bloom_level": "apply",
+      "explanation": "The primary goal of a user interface is to enable user interaction with the system. This involves providing clear information and facilitating intuitive navigation (Nielsen's heuristic #1)."
+    },
+    {
+      "question_number": 5,
+      "question": "Which UI design principle recommends avoiding unnecessary animations or effects?",
+      "options": [
+        "A) Simplicity",
+        "B) Consistency",
+        "C) Visibility of system status",
+        "D) Error prevention"
+      ],
+      "correct_answer_index": 4,
+      "correct_answer_letter": null,
+      "bloom_level": "understand",
+      "explanation": "Error prevention (Nielsen's principle #5) recommends avoiding unnecessary animations or effects to minimize user frustration and prevent errors. Unnecessary movements can distract users from their task or create a sense of instability in the system."
+    }
+  ]
+}

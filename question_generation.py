@@ -7,6 +7,7 @@ import json
 import logging
 import textwrap
 from pathlib import Path
+from typing import Optional
 
 import requests
 
@@ -33,68 +34,168 @@ logger = logging.getLogger(__name__)
 # PROMPT ENGINEERING
 # =============================================================================
 
-def build_prompt(text_block: str) -> str:
+def build_prompt(text_block: str, topic_hint: str | None = None) -> str:
     """Build structured prompt for MCQ generation with quality guidelines."""
     # Template encodes quality rules (Bloom levels, scenarios, 4 options).
     prompt_template = """
     You can be either an experienced university lecturer creating exam questions or a super
     curious student trying to test your understanding of complex material.
-    First of all, define bloom levels for questions and ask yourself to create questions
-    using levels 1, 2 and 3.
-
+    
+    Before writing the final output, THINK STEP BY STEP (internally):
+    1. Read the source text carefully and identify the most important concepts, principles, 
+    and methods related to "{topic_hint}".
+    2. For each Bloom level (remember, understand, apply), decide which concepts are most suitable.
+    3. Draft candidate question stems and options for each level.
+    4. Check that each question matches its intended Bloom level, is answerable from the source text, 
+    and follows all quality rules below.
+    5. Only then write the final questions in the required JSON format.
+    Do NOT include this plan or your reasoning in the output; return ONLY the JSON.
     Then, follow the detailed instructions below successively to generate high-quality multiple-choice questions.
 
     -->Design {question_count} HIGH-QUALITY, EXAM-STYLE MULTIPLE-CHOICE QUESTIONS in ENGLISH
-    for graduate students (that means higher education and academia is the target group)
+    for graduate or early graduate students (that means higher education/academia is the target group)
     based on those requirements:
 
     1. LANGUAGE & CONTENT
        - Write EVERYTHING in ENGLISH
-       - Do NOT ask about word meanings, translations, or quoted phrases
-       - Focus on concepts, principles, and application
+       - Base all questions ONLY on the source text. Do NOT invent external facts.
+       - Do NOT ask about word meanings, figures, translations, or quoted phrases.
+       - Focus on concepts, principles, design choices, trade-offs, and applications within the topic "{topic_hint}".
 
-    2. QUESTION QUALITY
-       - Clear, self-contained stem that can be answered without seeing options
-       - Paraphrase concepts; don't copy sentences verbatim
-       - Focus on important ideas, not trivial details
-       - Stems must reference specific concepts/techniques from the source (e.g., modularity, table detection); do NOT refer to "the text" or "the author"
-       - BAN phrases like "according to the text/author"; if such wording appears, rewrite the stem to name the specific concept directly
-       - Avoid vague summary stems like "What is the main challenge..."; rewrite to target a concrete concept or brief scenario/use-case
-       - At least 2 stems should include a short scenario/application that tests applying a concept, not just recalling it
-       - Cover different concepts across the text; do not repeat the same idea twice
-       - Vary stem styles (definition/contrast, scenario/application, diagnosis/consequence) to keep questions diverse
+    2. BLOOM LEVELS (ONLY 3 LEVELS ARE ALLOWED)
+    Use exactly these Bloom levels (1, 2 and 3) and definitions (revised Bloom’s taxonomy):
+    - "remember": the student recalls or recognizes a key fact, term, or definition.
+    - "understand": the student explains, interprets, summarizes, or classifies a concept in their own words.
+    - "apply": the student uses a concept, rule, or principle in a concrete situation or short scenario.
+
+    Across all {question_count} questions:
+    - At least 1 question must be "remember".
+    - At least 1 question must be "understand".
+    - At least 1 question must be "apply" (e.g. scenario, choosing the best method, detecting a violation).
+
+    You are free to choose which specific question uses which Bloom level, but each question must have
+    exactly ONE of: "remember", "understand", "apply".
+
+    3. QUESTION QUALITY & TOPIC COVERAGE
+    For EACH question:
+    - Write a clear, self-contained QUESTION STEM that can be read and understood without seeing the options.
+    - Paraphrase ideas; do NOT copy sentences verbatim from the source text.
+    - Target important ideas, not trivial details (no page numbers, no isolated buzzwords).
+    - Stems must reference specific concepts or techniques from the source text
+    (e.g. feedback, interaction principles, visual encoding, modularity, evaluation methods);
+    do NOT refer to "the text", "the slides" or "the author".
+    - BAN phrases like "according to the text/author" or "according to the slides".
+    If such wording would appear, rewrite the stem to name the specific concept directly.
+    - Avoid vague stems like "What is the main challenge ... ?".
+    Instead, ask about a concrete concept or a brief scenario / use case.
+    - At least 2 stems should include a short scenario or example that tests applying a concept,
+    not just recalling it (this is ideal for "apply" or strong "understand" questions).
+    - Cover different concepts across the questions; do NOT repeat the same idea twice.
+    - Vary stem styles (definition/contrast, scenario/application, diagnosis/consequence).
 
     4. ANSWER OPTIONS
-       - Provide EXACTLY 4 options: A, B, C, D
-       - ONE clearly correct answer supported by the text
-       - 3 plausible distractors based on common misconceptions
-       - All options similar in length and style
-       - NO "all of the above" or "none of the above"
-
+    For EACH question:
+    - Provide EXACTLY 4 answer options: A, B, C, D.
+    - ONLY ONE option is fully correct.
+    - The correct option must be clearly supported by the source text and sound reasoning.
+    - The 3 distractors must be:
+        * conceptually related to the topic of the stem,
+        * plausible for a partially informed student,
+        * clearly incorrect for an expert who has understood the material.
+    - All options should be similar in length, style, and level of detail.
+    - Make all options mutually exclusive (no overlapping meanings).
+    - Do NOT use "all of the above" or "none of the above".
+    
     5. EXPLANATION
-       - 2-4 sentences justifying the correct answer
-       - Briefly explain why other options are incorrect
+    For EACH question:
+    - Write 2-4 sentences that:
+        * justify why the correct option is correct, explicitly using concepts from the source text, and
+        * briefly explain why each distractor is not the best answer.
+
 
     OUTPUT FORMAT (JSON):
-    Return a JSON array with {question_count} objects, each containing:
-    - "question": question stem (string)
-    - "options": array of 4 answer options [A, B, C, D]
-    - "correct_answer_index": index 0-3 of correct option
+    
+    - Return a single JSON array with {question_count} objects.
+    - Do NOT wrap the JSON in Markdown code fences.
+    - Do NOT include any additional text before or after the JSON.
+
+    Each object MUST have exactly these fields:
+    - "question": the question stem (string)
+    - "options": an array of 4 answer options in order [A, B, C, D]
+    - "correct_answer_index": the index (0-3) of the correct option
     - "bloom_level": one of ["remember", "understand", "apply"]
-    - "explanation": scientific justification for correct answer (and source-based reasoning)
+    - "explanation": explanation text (string)
 
     EXAMPLE:
     [
-      {{"question": "User drags a folder and animation appears on screen showing files moving from one location to another. This is an example of:",
+      {{
+        "question": "A user drags a document onto a trash bin icon and an animation shows 
+        the document shrinking into the bin. Which principle of interaction does this best illustrate?",
         "options": [
           "Error Prevention",
-          "Visibility of status",
-          "Simplicity",
+          "Visibility of system status",
+          "Flexibility and efficiency of use",
           "Consistency"
         ],
         "correct_answer_index": 1,
         "bloom_level": "understand",
-        "explanation": "Animation provides real-time feedback, letting the user see what's happening (files are moving, not frozen) and confirming the system is working, fulfilling Nielsen's principle of keeping users informed of system status."
+        "explanation": "Animation makes the system state visible by showing what happens to the document.
+        It does not mainly prevent errors or enforce consistency; its primary role is to keep the user informed about the ongoing action."
+      }}, 
+      {{"question": "The remarkable principle of Mobile 2.0 is:",
+        "options": [
+          "Recognising that we are not only the consumers.",
+          "Recognising that we are the Lords of the Mobile market.",
+          "Recognising that we are in a new age of consumerization.",
+          "Recognising that we are not recognised at all."
+        ],
+        "correct_answer_index": 0,
+        "bloom_level": "understand",
+        "explanation": "Mobile 2.0 emphasizes that users are co-creators, not just consumers, aligning with option A. The other options overstate control, misstate the concept, or suggest a lack of recognition."
+      }},
+      {{"question": "Which of the following is the correct color association?",
+        "options": [
+          "Yellow — Go, OK, clear, vegetation, safety.",
+          "Red — Stop, fire, hot, danger.",
+          "Green — Cold, water, calm, sky, neutrality.",
+          "Blue — Caution, slow, test."
+        ],
+        "correct_answer_index": 1,
+        "bloom_level": "remember",
+        "explanation": "Red conventionally signals stop/danger/hot, so option B is correct. Yellow usually signals caution/go depending on context, green signals go/safety, and blue does not conventionally mean caution."
+      }},
+      {{"question": "A special type of overlapping window that has the windows automatically arranged in a regular progression is:",
+        "options": [
+          "Tiled window.",
+          "Cascading windows.",
+          "Primary window.",
+          "Secondary window."
+        ],
+        "correct_answer_index": 1,
+        "bloom_level": "remember",
+        "explanation": "Cascading windows overlap with a regular offset. Tiled windows do not overlap; primary/secondary are roles, not arrangement styles."
+      }},
+      {{"question": "A checkout form repeatedly shows errors after submission because users miss mandatory fields. Which design change best applies error prevention?",
+        "options": [
+          "Add field-level inline validation as soon as a required field loses focus.",
+          "Hide all optional fields behind an accordion to reduce clutter.",
+          "Move the error messages to the bottom of the page.",
+          "Increase the form font size on every field."
+        ],
+        "correct_answer_index": 0,
+        "bloom_level": "apply",
+        "explanation": "Applying error prevention means stopping mistakes early. Inline validation on blur gives immediate feedback before submission. The other options do not directly prevent the error condition."
+      }},
+      {{"question": "You need to ensure users verify a destructive action (delete all records). Which UI pattern best applies confirmation while keeping flow efficient?",
+        "options": [
+          "Replace the delete action with an undo after the fact without warning.",
+          "Trigger the delete immediately to avoid extra clicks.",
+          "Hide the delete action behind a submenu with no confirmation.",
+          "Add a modal dialog asking for typed confirmation before executing."
+        ],
+        "correct_answer_index": 3,
+        "bloom_level": "apply",
+        "explanation": "A typed confirmation modal for destructive, irreversible actions applies error prevention and explicit consent. The other options either remove safeguards or defer them until after damage is done."
       }}
     ]
 
@@ -106,9 +207,15 @@ def build_prompt(text_block: str) -> str:
     Generate {question_count} questions now. Return ONLY valid JSON, no additional text.
     """
 
+    # Optionally prepend a topic hint to the source text without changing the prompt body.
+    if topic_hint:
+        text_block = f"[Topic hint: {topic_hint}]\n\n{text_block}"
+
+    hint_value = topic_hint or "your topic"
     return textwrap.dedent(prompt_template).format(
         source_text=text_block,
         question_count=TARGET_QUESTIONS,
+        topic_hint=hint_value,
     )
 
 
@@ -146,7 +253,7 @@ def call_ollama(prompt: str) -> str:
 # JSON PARSING
 # =============================================================================
 
-def extract_json_from_text(text: str) -> dict | None:
+def extract_json_from_text(text: str) -> dict | None:  # pylint: disable=too-many-branches
     """Extract JSON from LLM output (handles code fences/noise)."""
     cleaned = text
 
@@ -165,6 +272,21 @@ def extract_json_from_text(text: str) -> dict | None:
         return {"questions": parsed} if isinstance(parsed, list) else parsed
     except json.JSONDecodeError:
         pass
+
+    # Heuristic: wrap concatenated objects in a list if no outer brackets
+    stripped = cleaned.strip()
+    if stripped.startswith("{") and not stripped.startswith("["):
+        try:
+            parsed = json.loads(f"[{stripped}]")
+            return {"questions": parsed}
+        except json.JSONDecodeError:
+            # Sometimes the model appends a trailing ']' without a leading '['
+            if stripped.endswith("]"):
+                try:
+                    parsed = json.loads(f"[{stripped}")
+                    return {"questions": parsed}
+                except json.JSONDecodeError:
+                    pass
 
     # Try extracting array or object segments
     candidates = []
@@ -260,12 +382,32 @@ def format_questions(questions: list[dict]) -> list[dict]:
 # =============================================================================
 
 # pylint: disable=too-many-locals
-def load_text_blocks(json_file: str) -> list[str]:
+def derive_topic_hint(pages: list) -> Optional[str]:
+    """Pick a default topic hint from the first page header/title."""
+    if not pages or not isinstance(pages[0], dict):
+        return None
+    first = pages[0]
+    blocks = first.get("blocks_hier") or first.get("blocks", [])
+    # Prefer explicit headers on the first page.
+    for block in blocks:
+        if str(block.get("type", "")).startswith("header_"):
+            title = (block.get("text") or "").strip()
+            if title:
+                return title
+    # Fallback: first non-empty block text.
+    for block in blocks:
+        title = (block.get("text") or "").strip()
+        if title:
+            return title[:120]
+    return None
+
+
+def load_text_blocks(json_file: str) -> tuple[list[str], Optional[str]]:
     """Load and filter text blocks from extracted PDF data."""
     path = Path(json_file)
     if not path.exists():
         logger.error("File not found: %s", json_file)
-        return []
+        return [], None
 
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
@@ -274,8 +416,9 @@ def load_text_blocks(json_file: str) -> list[str]:
     pages = data.get("pages") if isinstance(data, dict) else data
     if not isinstance(pages, list):
         logger.error("Unexpected JSON structure: expected list or dict['pages']")
-        return []
+        return [], None
 
+    topic_hint = derive_topic_hint(pages)
     blocks = []
 
     # Calculate font size threshold for heading detection
@@ -330,7 +473,7 @@ def load_text_blocks(json_file: str) -> list[str]:
 
     if not blocks:
         logger.warning("No suitable text blocks found in extracted data")
-        return []
+        return [], topic_hint
 
     # Limit to MAX_BLOCKS to keep the prompt concise.
     if len(blocks) > MAX_BLOCKS:
@@ -338,14 +481,17 @@ def load_text_blocks(json_file: str) -> list[str]:
         blocks = blocks[:MAX_BLOCKS]
 
     logger.info("Loaded %s text blocks for processing", len(blocks))
-    return blocks
+    return blocks, topic_hint
 
 
 # =============================================================================
 # QUESTION GENERATION
 # =============================================================================
 
-def generate_questions_from_blocks(blocks: list[str]) -> list[dict]:
+def generate_questions_from_blocks(
+    blocks: list[str],
+    topic_hint: str | None = None,
+) -> list[dict]:
     """Generate MCQ questions from text blocks using Ollama."""
     all_questions = []
 
@@ -353,7 +499,7 @@ def generate_questions_from_blocks(blocks: list[str]) -> list[dict]:
         logger.info("Processing block %s/%s", i, len(blocks))
         logger.debug("Block preview: %s...", block[:200])
 
-        prompt = build_prompt(block)
+        prompt = build_prompt(block, topic_hint=topic_hint)
 
         try:
             raw_answer = call_ollama(prompt)
@@ -372,7 +518,12 @@ def generate_questions_from_blocks(blocks: list[str]) -> list[dict]:
         # Parse and normalize LLM output; skip block on parse failure.
         parsed = extract_json_from_text(raw_answer)
         if not parsed:
-            logger.warning("Could not parse JSON from block %s", i)
+            # Persist raw response for debugging when parsing fails.
+            debug_dir = Path("all_output") / "generated_questions_output" / "raw_responses"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            raw_path = debug_dir / f"block_{i}.txt"
+            raw_path.write_text(raw_answer, encoding="utf-8")
+            logger.warning("Could not parse JSON from block %s (saved to %s)", i, raw_path)
             continue
 
         questions = normalize_questions(parsed)
@@ -413,7 +564,28 @@ def parse_args(argv=None) -> argparse.Namespace:
         default=str(OUTPUT_JSON),
         help=f"Path to write generated questions (default: {OUTPUT_JSON})",
     )
+    parser.add_argument(
+        "--topic-hint",
+        help="Optional topic hint to prepend to the source text",
+    )
+    parser.add_argument(
+        "--auto-version",
+        action="store_true",
+        help="Write to incrementing files (e.g., questions_v1.json, v2...)",
+    )
     return parser.parse_args(argv)
+
+
+def next_versioned_path(base: Path) -> Path:
+    """Return the next available _vN filename (starting at v1)."""
+    stem, suffix = base.stem, base.suffix
+    parent = base.parent
+    idx = 1
+    while True:
+        candidate = parent / f"{stem}_v{idx}{suffix}"
+        if not candidate.exists():
+            return candidate
+        idx += 1
 
 
 def main(argv=None):
@@ -429,15 +601,22 @@ def main(argv=None):
     # Load text blocks
     in_path = Path(args.input_json)
     out_path = Path(args.output_json)
+    if args.auto_version:
+        # Always write to a new numbered file to keep prior runs.
+        out_path = next_versioned_path(out_path)
 
-    blocks = load_text_blocks(in_path)
+    blocks, derived_topic = load_text_blocks(in_path)
     if not blocks:
         logger.error("No text blocks loaded. Exiting.")
         return
 
+    topic_hint = args.topic_hint or derived_topic
+
     # Generate questions
     logger.info("Generating questions from blocks...")
-    questions = generate_questions_from_blocks(blocks)
+    questions = generate_questions_from_blocks(
+        blocks, topic_hint=topic_hint
+    )
     formatted_questions = format_questions(questions)
     logger.info(
         "Total questions generated: %s",
@@ -450,6 +629,7 @@ def main(argv=None):
         "model": OLLAMA_MODEL,
         "question_type": "multiple_choice",
         "total_blocks_used": len(blocks),
+        "topic_hint": topic_hint,
         "questions": formatted_questions,
     }
 

@@ -21,10 +21,16 @@
   Reads `all_output/extracted_text_output/extracted_text.json` and writes to `all_output/generated_questions_output/questions.json`.
 - With custom paths:  
   `python question_generation.py --input-json all_output/extracted_text_output/no_ocr.json --output-json all_output/generated_questions_output/questions_no_ocr.json`
+- With topic hint (bias generation focus):  
+  `python question_generation.py --topic-hint "Konzepte aus Kapitel 3 stärker betonen"`
+- Auto-version outputs (questions_v1.json, v2, ...):  
+  `python question_generation.py --auto-version`
 
 ## H5P export
 - `python h5p_export.py`  
   Reads `all_output/generated_questions_output/questions.json` and writes H5P content to `all_output/h5p_output/`.
+- Export all versioned questions (`questions_v*.json`) to separate subfolders:  
+  `python h5p_export.py --all-versions`
 
 ## Full pipeline (sequential)
 1) `python pdf_text_extractor.py sample2.pdf` → `all_output/extracted_text_output/`

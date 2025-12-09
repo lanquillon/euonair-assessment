@@ -1,0 +1,78 @@
+{
+  "llm_provider": "ollama",
+  "model": "llama2",
+  "question_type": "multiple_choice",
+  "total_blocks_used": 8,
+  "questions": [
+    {
+      "question_number": 1,
+      "question": "What core activity in interaction design involves creating and managing digital content?",
+      "options": [
+        "A) Defining user needs and behaviors.",
+        "B) Designing information architecture and navigation.",
+        "C) Creating and managing digital content.",
+        "D) Testing and evaluating prototypes."
+      ],
+      "correct_answer_index": 2,
+      "correct_answer_letter": "C",
+      "bloom_level": "understand",
+      "explanation": "Content creation and management is a core activity in interaction design. The other options are related to other aspects of the process."
+    },
+    {
+      "question_number": 2,
+      "question": "According to the source text, which of the following best describes the goal of interaction design?",
+      "options": [
+        "A) To create aesthetically pleasing interfaces.",
+        "B) To improve user experience through usability and accessibility.",
+        "C) To optimize conversions and sales through persuasive design.",
+        "D) To create a sense of community and belonging through design."
+      ],
+      "correct_answer_index": 3,
+      "correct_answer_letter": "D",
+      "bloom_level": "remember",
+      "explanation": "The source text emphasizes the goal of interaction design as improving user experience through usability and accessibility. The other options are related to other aspects of design."
+    },
+    {
+      "question_number": 3,
+      "question": "Which of the following best represents the relationship between feedback and progress in interaction design?",
+      "options": [
+        "A) Feedback is a response to user action, while progress is the overall goal.",
+        "B) Feedback is a means of measuring progress, while progress is the ultimate goal.",
+        "C) Feedback and progress are interdependent; one cannot exist without the other.",
+        "D) Feedback and progress are separate concepts with no relationship."
+      ],
+      "correct_answer_index": 1,
+      "correct_answer_letter": "B",
+      "bloom_level": "understand",
+      "explanation": "The source text emphasizes that feedback and progress are interdependent; one cannot exist without the other. The other options misstate the relationship or separate the concepts."
+    },
+    {
+      "question_number": 4,
+      "question": "Which of the following is an example of a design principle according to the source text?",
+      "options": [
+        "A) The principle of visibility of system status.",
+        "B) The principle of recognition, recall, and reflection.",
+        "C) The principle of consistency in the design of interactive systems.",
+        "D) The principle of eliminating unnecessary elements from a design."
+      ],
+      "correct_answer_index": 0,
+      "correct_answer_letter": "A",
+      "bloom_level": "remember",
+      "explanation": "The source text emphasizes the principle of visibility of system status. The other options are related to other aspects of design or not directly mentioned in the source text."
+    },
+    {
+      "question_number": 5,
+      "question": "According to the source text, what is the primary goal of information architecture?",
+      "options": [
+        "A) To create aesthetically pleasing interfaces.",
+        "B) To improve user experience through usability and accessibility.",
+        "C) To organize content in a logical and intuitive manner.",
+        "D) To create a sense of community and belonging through design."
+      ],
+      "correct_answer_index": 2,
+      "correct_answer_letter": "C",
+      "bloom_level": "understand",
+      "explanation": "The primary goal of information architecture is to organize content in a logical and intuitive manner. The other options are related to other aspects of design."
+    }
+  ]
+}

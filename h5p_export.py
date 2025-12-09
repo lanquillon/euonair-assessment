@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -318,6 +319,30 @@ def export_all_questions_to_h5p(
     return success_count, error_count
 
 
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """CLI args for selecting questions file(s)."""
+    parser = argparse.ArgumentParser(
+        description="Export MCQ questions to H5P packages."
+    )
+    parser.add_argument(
+        "--questions-file",
+        default=str(QUESTIONS_JSON),
+        help=f"Path to questions JSON (default: {QUESTIONS_JSON})",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=str(OUTPUT_DIR),
+        help=f"Output directory for H5P files (default: {OUTPUT_DIR})",
+    )
+    parser.add_argument(
+        "--all-versions",
+        action="store_true",
+        help="Export all questions_v*.json in the questions-file directory "
+        "to separate subfolders under output-dir.",
+    )
+    return parser.parse_args(argv)
+
+
 def main() -> int:
     """CLI entry point with summary."""
     print("=" * 70)
@@ -325,22 +350,44 @@ def main() -> int:
     print("=" * 70)
     print()
 
+    args = parse_args()
+
     try:
-        success, errors = export_all_questions_to_h5p(
-            questions_file=str(QUESTIONS_JSON),
-            output_dir=OUTPUT_DIR,
-            validate=True,
-        )
+        total_success = 0
+        total_errors = 0
+
+        questions_path = Path(args.questions_file)
+        output_root = Path(args.output_dir)
+
+        files_to_process: list[Path]
+        if args.all_versions:
+            pattern = f"{questions_path.stem}_v*.json"
+            files_to_process = sorted(questions_path.parent.glob(pattern))
+            if not files_to_process:
+                print(f"[WARN] No files matching {pattern}; using {questions_path}")
+                files_to_process = [questions_path]
+        else:
+            files_to_process = [questions_path]
+
+        for qfile in files_to_process:
+            target_dir = output_root / qfile.stem if args.all_versions else output_root
+            success, errors = export_all_questions_to_h5p(
+                questions_file=str(qfile),
+                output_dir=target_dir,
+                validate=True,
+            )
+            total_success += success
+            total_errors += errors
 
         print("\n" + "=" * 70)
-        if errors == 0:
-            print(f"Success! {success} H5P file(s) created in: {OUTPUT_DIR}")
+        if total_errors == 0:
+            print(f"Success! {total_success} H5P file(s) created under: {output_root}")
         else:
             print("Completed with issues:")
-            print(f"   {success} succeeded, {errors} failed")
+            print(f"   {total_success} succeeded, {total_errors} failed")
         print("=" * 70)
 
-        return 0 if errors == 0 else 1
+        return 0 if total_errors == 0 else 1
 
     except FileNotFoundError as exc:
         print(f"\n[ERROR] {exc}")

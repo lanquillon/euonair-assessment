@@ -1,0 +1,79 @@
+{
+  "llm_provider": "ollama",
+  "model": "llama2",
+  "question_type": "multiple_choice",
+  "total_blocks_used": 8,
+  "topic_hint": "Interaction design",
+  "questions": [
+    {
+      "question_number": 1,
+      "question": "What is the primary goal of interaction design?",
+      "options": [
+        "A) To create a visually appealing user interface.",
+        "B) To make the user feel in control of the system.",
+        "C) To reduce cognitive load on the user.",
+        "D) To increase the efficiency of user actions."
+      ],
+      "correct_answer_index": 0,
+      "correct_answer_letter": "A",
+      "bloom_level": "understand",
+      "explanation": "Interaction design aims to enhance user experience by reducing mental effort and improving usability. The correct answer focuses on the user's cognitive load, which is the primary goal of interaction design."
+    },
+    {
+      "question_number": 2,
+      "question": "Which design principle states that users should have control over their actions?",
+      "options": [
+        "A) Consistency",
+        "B) Flexibility and efficiency of use",
+        "C) Error prevention",
+        "D) Visibility of system status"
+      ],
+      "correct_answer_index": 1,
+      "correct_answer_letter": "B",
+      "bloom_level": "understand",
+      "explanation": "Option A states that users should have control over their actions. The other options do not directly address user control."
+    },
+    {
+      "question_number": 3,
+      "question": "What is the purpose of an affirmative feedback mechanism in interaction design?",
+      "options": [
+        "A) To indicate system status to the user.",
+        "B) To provide auditory feedback to the user.",
+        "C) To visually signal system actions to the user.",
+        "D) To prompt the user for input."
+      ],
+      "correct_answer_index": 2,
+      "correct_answer_letter": "C",
+      "bloom_level": "remember",
+      "explanation": "Affirmative feedback mechanisms provide positive acknowledgment of user actions. The correct answer is the primary purpose of affirmative feedback."
+    },
+    {
+      "question_number": 4,
+      "question": "What is the difference between a modal window and a pop-up window in interaction design?",
+      "options": [
+        "A) A modal window covers the entire screen, while a pop-up window appears on top of other windows.",
+        "B) A modal window appears within the main application, while a pop-up window appears as a separate application.",
+        "C) A modal window disappears after use, while a pop-up window remains visible until closed.",
+        "D) A modal window is more interactive, while a pop-up window is less interactive."
+      ],
+      "correct_answer_index": 3,
+      "correct_answer_letter": "D",
+      "bloom_level": "remember",
+      "explanation": "Modal windows cover the entire screen, while pop-up windows appear on top of other windows. The correct answer highlights the visual distinction between these window types."
+    },
+    {
+      "question_number": 5,
+      "question": "What is the purpose of a hover effect in interaction design?",
+      "options": [
+        "A) To provide visual feedback to the user.",
+        "B) To initiate an action without explicit input from the user.",
+        "C) To create a tactile sensation for the user.",
+        "D) To signal the availability of additional actions or information."
+      ],
+      "correct_answer_index": 4,
+      "correct_answer_letter": null,
+      "bloom_level": "remember",
+      "explanation": "Hover effects provide visual feedback to users. The correct answer emphasizes the purpose of hover effects in interaction design."
+    }
+  ]
+}
